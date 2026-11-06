@@ -1,0 +1,13 @@
+{
+  "id": "ojowacam-obs-macos",
+  "name": "Ojowacam OBS Plugin (macOS)",
+  "description": "Turn your iPhone into a webcam and microphone for OBS Studio on macOS",
+  "author": "Ojowacam Team",
+  "url": "https://github.com/ojowa/ojcam",
+  "platform": "macOS",
+  "sources": [
+    "ojowacam_camera_source",
+    "ojowacam_audio_source"
+  ],
+  "min_obs_version": "27.0.0"
+}
