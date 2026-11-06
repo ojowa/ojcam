@@ -1,0 +1,203 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+  JAVA_VERSION: '17'
+
+jobs:
+  # ============================================================
+  # Android Build & Test
+  # ============================================================
+  android-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd apps/mobile && npm install
+
+      - name: Lint Android code
+        run: |
+          cd apps/mobile/android && ./gradlew lint
+
+      - name: Build Android APK
+        run: |
+          cd apps/mobile/android && ./gradlew assembleDebug
+
+      - name: Run Android unit tests
+        run: |
+          cd apps/mobile/android && ./gradlew testDebugUnitTest
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-android-apk
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+
+  # ============================================================
+  # Windows Build & Test
+  # ============================================================
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore Windows dependencies
+        run: |
+          dotnet restore apps/desktop-windows/Ojowacam.Desktop.csproj
+
+      - name: Build Windows application
+        run: |
+          dotnet build apps/desktop-windows/Ojowacam.Desktop.csproj -c Release
+
+      - name: Run Windows unit tests
+        run: |
+          dotnet test apps/desktop-windows/Ojowacam.Desktop.csproj -c Release --no-build
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-windows-build
+          path: apps/desktop-windows/bin/Release/
+
+  # ============================================================
+  # macOS Build & Test
+  # ============================================================
+  macos-build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        run: |
+          sudo xcode-select -switch /Applications/Xcode_15.app/Contents/Developer
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd apps/mobile && npm install
+
+      - name: Build macOS companion
+        run: |
+          cd apps/desktop-macos && swift build -c release
+
+      - name: Build OBS plugin (macOS)
+        run: |
+          cd apps/obs-plugin/macos-plugin && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(sysctl -n hw.ncpu)
+
+      - name: Run macOS unit tests
+        run: |
+          cd apps/desktop-macos && swift test
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-macos-build
+          path: apps/desktop-macos/.build/release/
+
+  # ============================================================
+  # C++ Streaming Core Build & Test
+  # ============================================================
+  cpp-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install CMake and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libobs-dev libwebrtc-dev
+
+      - name: Configure CMake
+        run: |
+          cd packages/streaming-core && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build C++ streaming core
+        run: |
+          cd packages/streaming-core/build && make -j$(nproc)
+
+      - name: Run C++ tests
+        run: |
+          cd packages/streaming-core/build && ctest --output-on-failure
+
+  # ============================================================
+  # Security Scan
+  # ============================================================
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run dependency vulnerability scan
+        uses: actions/npm audit@v1
+        with:
+          args: --audit-level=high
+
+      - name: Run SAST scan (CodeQL)
+        uses: github/codeql-action/analyze@v3
+        with:
+          languages: ['csharp', 'javascript', 'swift', 'kotlin', 'cpp']
+
+  # ============================================================
+  # Release Build
+  # ============================================================
+  release:
+    needs: [android-build, windows-build, macos-build, cpp-build, security-scan]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/ojowacam-android-apk/app-debug.apk
+            artifacts/ojowacam-windows-build/**
+            artifacts/ojowacam-macos-build/**
+          generate_release_notes: true

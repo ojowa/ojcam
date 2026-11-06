@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" 
+           Name="Ojowacam Desktop" 
+           Language="1033" 
+           Version="1.0.0" 
+           Manufacturer="Ojowacam Team" 
+           UpgradeCode="7d1e3a4b-5c6f-4a2b-9d8e-7f6a5b4c3d2e">
+
+    <Package InstallerVersion="500" 
+             Compressed="yes" 
+             InstallScope="perMachine" 
+             Manufacturer="Ojowacam Team" />
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes" 
+                  DowngradeErrorMessage="A newer version of Ojowacam is already installed." />
+
+    <Media Id="1" Cabinet="ojowacam.cab" EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder" Name="PFiles">
+        <Directory Id="INSTALLFOLDER" Name="Ojowacam Desktop">
+          <Directory Id="BINDIR" Name="bin" />
+          <Directory Id="RESOURCESDIR" Name="resources" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" Name="Programs">
+        <Directory Id="OJOWACAM_MENU" Name="Ojowacam">
+          <Component Id="ShortcutComponent" Guid="8e7d6c5b-4a3f-4b2c-9d1e-7f6a5b4c3d2e">
+            <Shortcut Id="StartMenuShortcut" 
+                      Name="Ojowacam Desktop" 
+                      Description="Ojowacam - Your Phone. Your Camera. Your Studio." 
+                      Target="[INSTALLFOLDER]\bin\Ojowacam.Desktop.exe" 
+                      WorkingDirectory="INSTALLFOLDER" />
+            <RemoveFolder Id="OJOWACAM_MENU" On="uninstall" />
+            <RegistryValue Root="HKCU" 
+                           Key="Software\Ojowacam\Desktop" 
+                           Name="installed" 
+                           Type="integer" 
+                           Value="1" 
+                           KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="MainFeature" Title="Ojowacam Desktop" Level="1">
+      <ComponentRef Id="ShortcutComponent" />
+      <!-- Additional components for binaries would go here -->
+    </Feature>
+
+    <UI>
+      <UIRef Id="WixUI_Minimal" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg">ORDER &gt; 1</Publish>
+      <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg">1</Publish>
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg">LicenseAccepted = "1"</Publish>
+    </UI>
+
+    <WixVariable Id="WixUIBannerBmp" Value="infrastructure/installers/banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="infrastructure/installers/dialog.bmp" />
+
+  </Product>
+</Wix>
