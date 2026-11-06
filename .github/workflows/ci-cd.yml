@@ -9,6 +9,7 @@ on:
 env:
   ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
   JAVA_VERSION: '17'
+  OBS_VERSION: '30.1.2'
 
 jobs:
   android-build:
@@ -122,6 +123,155 @@ jobs:
         run: |
           cd packages/streaming-core/build && ctest --output-on-failure
 
+  obs-plugin-build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: ojowacam-obs-windows
+            cmake_generator: '-G "Visual Studio 17 2022" -A x64'
+            shell: pwsh
+          - os: macos-latest
+            artifact_name: ojowacam-obs-macos
+            cmake_generator: '-G "Unix Makefiles"'
+            shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+            choco install cmake --allowemptychecksums -y
+          }
+          Write-Host "CMake version: $(cmake --version | Select-Object -First 1)"
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install cmake ninja qt@6 ffmpeg curl libuv python3
+
+      - name: Clone OBS Studio SDK
+        run: |
+          git clone --depth 1 --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git obs-studio
+
+      - name: Configure OBS Studio (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S obs-studio -B obs-studio/build ${{ matrix.cmake_generator }} `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_OBS=OFF `
+            -DENABLE_SCRIPTING=OFF `
+            -DENABLE_STREAMFX=OFF `
+            -DENABLE_SPEECH_TO_TEXT=OFF `
+            -DENABLE_VST=OFF `
+            -DENABLE_WEBRTC=OFF
+          Write-Host "OBS configure complete"
+
+      - name: Configure OBS Studio (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cmake -S obs-studio -B obs-studio/build ${{ matrix.cmake_generator }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_OBS=OFF \
+            -DENABLE_SCRIPTING=OFF \
+            -DENABLE_STREAMFX=OFF \
+            -DENABLE_SPEECH_TO_TEXT=OFF \
+            -DENABLE_VST=OFF \
+            -DENABLE_WEBRTC=OFF
+          echo "OBS configure complete"
+
+      - name: Build OBS libobs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --build obs-studio/build --config Release --target obs -j 4
+          Write-Host "OBS build complete"
+
+      - name: Build OBS libobs (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cmake --build obs-studio/build --target obs -j $(sysctl -n hw.ncpu)
+          echo "OBS build complete"
+
+      - name: Install OBS to local prefix (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
+          cmake --install obs-studio/build --prefix $env:OBS_INSTALL_PREFIX --config Release
+          Write-Host "OBS installed to $env:OBS_INSTALL_PREFIX"
+
+      - name: Install OBS to local prefix (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          cmake --install obs-studio/build --prefix $OBS_INSTALL_PREFIX
+          echo "OBS installed to $OBS_INSTALL_PREFIX"
+
+      - name: Configure Ojowacam OBS Plugin (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
+          cmake -S apps/obs-plugin -B apps/obs-plugin/build ${{ matrix.cmake_generator }} `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH=$env:OBS_INSTALL_PREFIX
+          Write-Host "Ojowacam plugin configure complete"
+
+      - name: Configure Ojowacam OBS Plugin (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          cmake -S apps/obs-plugin -B apps/obs-plugin/build ${{ matrix.cmake_generator }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=$OBS_INSTALL_PREFIX
+          echo "Ojowacam plugin configure complete"
+
+      - name: Build Ojowacam OBS Plugin (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --build apps/obs-plugin/build --config Release --target ojowacam-obs -j 4
+          Write-Host "Ojowacam plugin build complete"
+
+      - name: Build Ojowacam OBS Plugin (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cmake --build apps/obs-plugin/build -j $(sysctl -n hw.ncpu)
+          echo "Ojowacam plugin build complete"
+
+      - name: Upload Windows OBS Plugin artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            apps/obs-plugin/build/**/*.dll
+            apps/obs-plugin/build/**/*.pdb
+            apps/obs-plugin/build/**/*.lib
+            apps/obs-plugin/build/**/*.exp
+
+      - name: Upload macOS OBS Plugin artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            apps/obs-plugin/build/**/*.bundle
+            apps/obs-plugin/build/**/*.dylib
+
   security-scan:
     runs-on: ubuntu-latest
     steps:
@@ -137,7 +287,7 @@ jobs:
           languages: ['csharp', 'javascript', 'swift', 'kotlin', 'cpp']
 
   release:
-    needs: [android-build, windows-build, macos-build, cpp-build, security-scan]
+    needs: [android-build, windows-build, macos-build, cpp-build, obs-plugin-build, security-scan]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     steps:
@@ -154,4 +304,6 @@ jobs:
             artifacts/ojowacam-android-apk/app-debug.apk
             artifacts/ojowacam-windows-build/**
             artifacts/ojowacam-macos-build/**
+            artifacts/ojowacam-obs-windows/**
+            artifacts/ojowacam-obs-macos/**
           generate_release_notes: true
