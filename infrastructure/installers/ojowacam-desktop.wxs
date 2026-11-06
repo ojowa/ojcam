@@ -20,6 +20,14 @@
           <Directory Id="RESOURCESDIR" Name="resources" />
         </Directory>
       </Directory>
+      <!-- OBS Plugin directory for Windows 10/11 -->
+      <Directory Id="APPDATAFolder" Name="AppData">
+        <Directory Id="ObsStaging" Name="obs-studio">
+          <Directory Id="ObsPlugins" Name="plugins">
+            <Directory Id="OjowacamObsPluginDir" Name="ojowacam-obs" />
+          </Directory>
+        </Directory>
+      </Directory>
       <Directory Id="ProgramMenuFolder" Name="Programs">
         <Directory Id="OJOWACAM_MENU" Name="Ojowacam">
           <Component Id="ShortcutComponent" Guid="8e7d6c5b-4a3f-4b2c-9d1e-7f6a5b4c3d2e">
@@ -36,11 +44,26 @@
                            Value="1" 
                            KeyPath="yes" />
           </Component>
+          <!-- OBS Plugin Component -->
+          <Component Id="ObsPluginComponent" Guid="a1b2c3d4-e5f6-4a2b-9d8e-7f6a5b4c3d2e" Win64="yes">
+            <File Id="OjowacamObsPluginDll" Source="$(var.ProjectDir)..\..\artifacts\ojowacam-obs-windows\ojowacam-obs.dll" />
+            <File Id="OjowacamObsModuleJson" Source="$(var.ProjectDir)..\..\artifacts\ojowacam-obs-windows\module.json" />
+            <RemoveFolder Id="OjowacamObsPluginDir" On="uninstall" />
+            <RegistryValue Root="HKCU"
+                           Key="Software\Ojowacam\ObsPlugin"
+                           Name="installed"
+                           Type="integer"
+                           Value="1"
+                           KeyPath="yes" />
+          </Component>
         </Directory>
       </Directory>
     </Directory>
     <Feature Id="MainFeature" Title="Ojowacam Desktop" Level="1">
       <ComponentRef Id="ShortcutComponent" />
+    </Feature>
+    <Feature Id="ObsPluginFeature" Title="Ojowacam OBS Plugin" Description="OBS Studio plugin for Ojowacam" Level="1">
+      <ComponentRef Id="ObsPluginComponent" />
     </Feature>
     <UI>
       <UIRef Id="WixUI_Minimal" />

@@ -49,6 +49,7 @@ jobs:
           path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 
   windows-build:
+    # Windows Server 2022 (windows-latest) is binary-compatible with Windows 10 and Windows 11.
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -251,6 +252,45 @@ jobs:
         run: |
           cmake --build apps/obs-plugin/build -j $(sysctl -n hw.ncpu)
           echo "Ojowacam plugin build complete"
+
+      - name: Code sign Windows OBS Plugin (Authenticode)
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_CERT != ''
+        shell: pwsh
+        run: |
+          $certPath = "$env:RUNNER_TEMP/ojowacam-signing-cert.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, [System.Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT))
+          $dllPath = Get-ChildItem -Path "apps/obs-plugin/build/Release/*.dll" | Select-Object -First 1
+          if ($dllPath) {
+            & signtool sign /f $certPath /p $env:WINDOWS_SIGNING_CERT_PASSWORD /t http://timestamp.digicert.com /v $dllPath.FullName
+            Write-Host "Windows OBS plugin signed successfully"
+          } else {
+            Write-Host "No DLL found to sign"
+          }
+
+      - name: Code sign and notarize macOS OBS Plugin
+        if: runner.os == 'macOS' && env.APPLE_DEVELOPER_ID != ''
+        shell: bash
+        run: |
+          BUNDLE_PATH=$(find apps/obs-plugin/build -name "*.bundle" -type d | head -1)
+          if [ -n "$BUNDLE_PATH" ]; then
+            # Sign the bundle
+            codesign --deep --force --sign "$APPLE_DEVELOPER_ID" "$BUNDLE_PATH"
+            echo "macOS OBS plugin signed"
+            
+            # Notarize with Apple
+            xcrun notarytool submit "$BUNDLE_PATH" \
+              --apple-id "$APPLE_NOTARY_APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_NOTARY_PASSWORD" \
+              --wait
+            echo "macOS OBS plugin notarized"
+            
+            # Staple the ticket
+            xcrun stapler staple "$BUNDLE_PATH"
+            echo "macOS OBS plugin stapled"
+          else
+            echo "No bundle found to sign"
+          fi
 
       - name: Upload Windows OBS Plugin artifact
         if: runner.os == 'Windows'
