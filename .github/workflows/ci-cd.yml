@@ -219,6 +219,60 @@ jobs:
           cmake --install obs-studio/build --prefix $OBS_INSTALL_PREFIX
           echo "OBS installed to $OBS_INSTALL_PREFIX"
 
+      - name: Validate OBS installation (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
+          Write-Host "=== OBS Install Tree ==="
+          Get-ChildItem -Recurse $env:OBS_INSTALL_PREFIX | Select-Object -First 50
+          Write-Host "=== Checking for OBS CMake config ==="
+          $configPaths = @(
+            "$env:OBS_INSTALL_PREFIX/lib/cmake/OBS/OBSConfig.cmake",
+            "$env:OBS_INSTALL_PREFIX/lib64/cmake/OBS/OBSConfig.cmake",
+            "$env:OBS_INSTALL_PREFIX/share/cmake/OBS/OBSConfig.cmake"
+          )
+          $found = $false
+          foreach ($p in $configPaths) {
+            if (Test-Path $p) {
+              Write-Host "FOUND: $p"
+              $found = $true
+            }
+          }
+          if (-not $found) {
+            Write-Host "WARNING: No OBS CMake config package found. Plugin will use manual detection fallback."
+          }
+          Write-Host "=== OBS Headers ==="
+          Get-ChildItem -Path "$env:OBS_INSTALL_PREFIX/include" -Recurse -Filter "*.h" | Select-Object -First 20
+          Write-Host "=== OBS Libraries ==="
+          Get-ChildItem -Path "$env:OBS_INSTALL_PREFIX/lib" -Recurse -Filter "*.lib" -ErrorAction SilentlyContinue
+          Get-ChildItem -Path "$env:OBS_INSTALL_PREFIX/bin" -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue
+
+      - name: Validate OBS installation (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          echo "=== OBS Install Tree ==="
+          find "$OBS_INSTALL_PREFIX" -type f | head -50
+          echo "=== Checking for OBS CMake config ==="
+          found=0
+          for p in "$OBS_INSTALL_PREFIX/lib/cmake/OBS/OBSConfig.cmake" \
+                   "$OBS_INSTALL_PREFIX/lib64/cmake/OBS/OBSConfig.cmake" \
+                   "$OBS_INSTALL_PREFIX/share/cmake/OBS/OBSConfig.cmake"; do
+            if [ -f "$p" ]; then
+              echo "FOUND: $p"
+              found=1
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "WARNING: No OBS CMake config package found. Plugin will use manual detection fallback."
+          fi
+          echo "=== OBS Headers ==="
+          find "$OBS_INSTALL_PREFIX/include" -name "*.h" | head -20
+          echo "=== OBS Libraries ==="
+          find "$OBS_INSTALL_PREFIX/lib" -name "*.dylib" -o -name "*.a" 2>/dev/null | head -10
+
       - name: Configure Ojowacam OBS Plugin (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
