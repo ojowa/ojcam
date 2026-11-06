@@ -1,0 +1,1 @@
+syntax = "proto3";\nmessage StartSession {\n  string session_id = 1;\n  VideoConfig video = 2;\n  AudioConfig audio = 3;\n}\nmessage VideoConfig {\n  string resolution = 1;\n  int32 fps = 2;\n  string codec = 3;\n  int32 bitrate = 4;\n}\nmessage AudioConfig {\n  string codec = 1;\n  int32 sample_rate = 2;\n  int32 channels = 3;\n}

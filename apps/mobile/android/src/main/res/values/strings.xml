@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Ojowacam</string>
+    <string name="camera_permission_rationale">Ojowacam needs camera access to stream video.</string>
+    <string name="microphone_permission_rationale">Ojowacam needs microphone access to stream audio.</string>
+</resources>

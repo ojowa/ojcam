@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+**/android/app/build/
+**/android/build/
+**/ios/build/
+**/*.xcbuild/
+**/*.xcodeproj/project.xcworkspace/
+**/DerivedData/
+**/.cxx/
+
+# Expo / Metro
+.expo/
+.webpack/
+**/.expo/
+
+# iOS
+**/ios/Pods/
+**/ios/*.xcworkspace/
+**/ios/*.xcodeproj/xcuserdata/
+**/ios/Generated/
+
+# Android
+**/android/.gradle/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/keystore.jks
+
+# Windows
+**/obj/
+**/bin/
+**/*.user
+**/*.suo
+**/.vs/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Package files
+*.tgz
+*.gem
+*.egg
+*.whl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Misc
+*.lock
+package-lock.json
+yarn.lock
+.pnpm-store/
+
+# Environment
+.env
+.env.local
+.env.*.local

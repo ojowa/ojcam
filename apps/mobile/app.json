@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "Ojowacam",
+    "slug": "ojowacam-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "cameraUsageDescription": "Ojowacam needs access to your camera to stream video.",
+      "microphoneUsageDescription": "Ojowacam needs access to your microphone to stream audio."
+    },
+    "android": {
+      "package": "com.ojowacam.mobile",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "INTERNET",
+        "ACCESS_WIFI_STATE",
+        "ACCESS_NETWORK_STATE",
+        "WAKE_LOCK",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-camera",
+      "expo-av",
+      "expo-screen-orientation",
+      "expo-keep-awake",
+      "expo-file-system"
+    ]
+  }
+}

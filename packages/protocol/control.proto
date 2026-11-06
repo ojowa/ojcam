@@ -1,0 +1,1 @@
+syntax = "proto3";\nmessage ControlCommand {\n  string type = 1;\n  float zoom = 2;\n  bool focus = 3;\n  bool torch = 4;\n  string orientation = 5;\n}

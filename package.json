@@ -1,0 +1,24 @@
+{
+  "name": "ojowacam",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Your Phone. Your Camera. Your Studio.",
+  "main": "index.js",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\\" && exit 1",
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "turbo": "^1.9.0"
+  }
+}

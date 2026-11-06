@@ -1,0 +1,1 @@
+syntax = "proto3";\nmessage DeviceAnnouncement {\n  string device_id = 1;\n  string device_name = 2;\n  Capabilities capabilities = 3;\n}\nmessage Capabilities {\n  bool video = 1;\n  bool audio = 2;\n  repeated string resolutions = 3;\n  repeated int32 frame_rates = 4;\n}

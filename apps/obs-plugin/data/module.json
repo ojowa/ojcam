@@ -1,0 +1,7 @@
+# Ojowacam OBS Plugin Module
+# This file describes the plugin for OBS Studio
+
+name=Ojowacam OBS Plugin
+description=Turn your smartphone into a webcam and microphone for OBS Studio
+author=Ojowacam Team
+url=https://github.com/ojowacam/ojowacam
