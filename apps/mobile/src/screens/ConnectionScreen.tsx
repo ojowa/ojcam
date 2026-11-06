@@ -1,6 +1,64 @@
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch, StatusBar, Alert } from 'react-native';
+import { USBService } from '../services/usb/USBService';
 
 export default function ConnectionScreen() {
+  const [connectionMode, setConnectionMode] = React.useState<'wifi' | 'usb'>('wifi');
+  const [usbDevices, setUSBDevices] = React.useState<Array<{id: string; name: string; type: string}>>([]);
+  const [isUsbConnected, setIsUsbConnected] = React.useState(false);
+  const [wifiStatus, setWifiStatus] = React.useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+
+  const loadUSBDevices = async () => {
+    try {
+      const devices = await USBService.getUSBDevices();
+      setUSBDevices(devices.map(d => ({
+        id: d.deviceId,
+        name: d.deviceName,
+        type: d.type
+      })));
+    } catch (error) {
+      console.error('Failed to load USB devices:', error);
+    }
+  };
+
+  const connectUSB = async (deviceId: string) => {
+    try {
+      const success = await USBService.startUSB(deviceId, 8080, 8081);
+      setIsUsbConnected(success);
+      if (success) {
+        Alert.alert('USB Connected', 'Phone connected via USB to computer');
+      }
+    } catch (error) {
+      Alert.alert('USB Connection Failed', error.message);
+    }
+  };
+
+  const disconnectUSB = async () => {
+    await USBService.stopUSB();
+    setIsUsbConnected(false);
+  };
+
+  const connectWiFi = async () => {
+    setWifiStatus('connecting');
+    setTimeout(() => {
+      setWifiStatus('connected');
+    }, 1500);
+  };
+
+  const disconnectWiFi = async () => {
+    setWifiStatus('disconnected');
+  };
+
+  React.useEffect(() => {
+    loadUSBDevices();
+    USBService.on('onUSBConnected', (data) => {
+      setIsUsbConnected(true);
+    });
+    USBService.on('onUSBDisconnected', () => {
+      setIsUsbConnected(false);
+    });
+  }, []);
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.card}>
@@ -10,30 +68,85 @@ export default function ConnectionScreen() {
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Connection Mode</Text>
-        <TouchableOpacity style={styles.optionRow}>
-          <Text>Wi-Fi</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.optionRow}>
-          <Text>USB (ADB)</Text>
-        </TouchableOpacity>
+        <View style={styles.modeRow}>
+          <TouchableOpacity
+            style={[styles.optionRow, connectionMode === 'wifi' && styles.selectedMode]}
+            onPress={() => setConnectionMode('wifi')}
+          >
+            <Text style={[styles.modeText, connectionMode === 'wifi' && styles.modeTextSelected]}>
+              Wi-Fi
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.optionRow, connectionMode === 'usb' && styles.selectedMode]}
+            onPress={() => setConnectionMode('usb')}
+          >
+            <Text style={[styles.modeText, connectionMode === 'usb' && styles.modeTextSelected]}>
+              USB
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {connectionMode === 'wifi' && (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Wi-Fi Connection</Text>
+          <View style={styles.statusRow}>
+            <View style={[styles.statusDot, wifiStatus === 'connected' && styles.statusDotConnected]} />
+            <Text>{wifiStatus === 'connected' ? 'Connected' : wifiStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}</Text>
+          </View>
+          <TouchableOpacity style={styles.button} onPress={wifiStatus === 'connected' ? disconnectWiFi : connectWiFi}>
+            <Text style={styles.buttonText}>{wifiStatus === 'connected' ? 'Disconnect Wi-Fi' : 'Connect Wi-Fi'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {connectionMode === 'usb' && (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>USB Devices</Text>
+            {usbDevices.length === 0 ? (
+              <Text style={styles.emptyText}>No USB devices detected. Connect via USB cable.</Text>
+            ) : (
+              usbDevices.map((device) => (
+                <TouchableOpacity
+                  key={device.id}
+                  style={styles.usbDeviceRow}
+                  onPress={() => connectUSB(device.id)}
+                >
+                  <Text style={styles.usbDeviceName}>{device.name}</Text>
+                  <Text style={styles.usbDeviceType}>{device.type}</Text>
+                </TouchableOpacity>
+              ))
+            )}
+            <TouchableOpacity style={styles.button} onPress={loadUSBDevices}>
+              <Text style={styles.buttonText}>Refresh USB Devices</Text>
+            </TouchableOpacity>
+          </View>
+
+          {isUsbConnected && (
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>USB Status</Text>
+              <View style={styles.statusRow}>
+                <View style={styles.statusDotConnected} />
+                <Text>Connected via USB</Text>
+              </View>
+              <TouchableOpacity style={[styles.button, styles.disconnectButton]} onPress={disconnectUSB}>
+                <Text style={styles.buttonText}>Disconnect USB</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </>
+      )}
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Pairing</Text>
         <TouchableOpacity style={styles.button}>
-          <Text>Show QR Code</Text>
+          <Text style={styles.buttonText}>Show QR Code</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.buttonOutline}>
-          <Text>Enter Pairing Code</Text>
+          <Text style={styles.buttonText}>Enter Pairing Code</Text>
         </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Status</Text>
-        <View style={styles.statusRow}>
-          <View style={styles.statusDot} />
-          <Text>Disconnected</Text>
-        </View>
       </View>
 
       <StatusBar style="auto" />
@@ -74,12 +187,46 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 12,
   },
-  optionRow: {
+  modeRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 10,
+  },
+  optionRow: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#f9f9f9',
+  },
+  selectedMode: {
+    borderColor: '#007AFF',
+    backgroundColor: '#e8f4ff',
+  },
+  modeText: {
+    fontSize: 16,
+    color: '#666',
+  },
+  modeTextSelected: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FF3B30',
+  },
+  statusDotConnected: {
+    backgroundColor: '#34C759',
   },
   button: {
     backgroundColor: '#007AFF',
@@ -95,20 +242,34 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: 'center',
   },
+  disconnectButton: {
+    backgroundColor: '#FF3B30',
+  },
   buttonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
-  statusRow: {
+  usbDeviceRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 10,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
   },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#FF3B30',
+  usbDeviceName: {
+    fontSize: 16,
+    color: '#1a1a1a',
+  },
+  usbDeviceType: {
+    fontSize: 14,
+    color: '#666',
+  },
+  emptyText: {
+    color: '#999',
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 20,
   },
 });

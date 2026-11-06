@@ -9,6 +9,8 @@ include_directories(include)
 # Source files
 set(SOURCES
     src/transport/webrtc-transport.cpp
+    src/transport/usb/adb-usb-transport.cpp
+    src/transport/usb/ios-usb-transport.cpp
     src/decoder/video-decoder.cpp
     src/audio/audio-decoder.cpp
     src/synchronization/stream-synchronizer.cpp
