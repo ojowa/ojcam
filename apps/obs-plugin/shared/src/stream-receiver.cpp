@@ -3,6 +3,7 @@
 #include <obs-module.h>
 #include <chrono>
 #include <thread>
+#include <algorithm>
 
 namespace ojowacam {
 
@@ -26,6 +27,9 @@ struct StreamReceiver::Impl {
     int reconnect_attempts_ = 0;
     static constexpr int kMaxReconnectAttempts = 10;
 
+    // Frame converter format (set from SPS or default)
+    VideoPixelFormat video_format_ = VideoPixelFormat::Unknown;
+
     Impl() = default;
     ~Impl() {
         stop_reconnect_ = true;
@@ -46,32 +50,18 @@ StreamReceiver::StreamReceiver(obs_source_t* video_source, obs_source_t* audio_s
     impl_->synchronizer = std::make_unique<StreamSynchronizer>();
     impl_->frame_converter = std::make_unique<FrameConverter>();
 
-    // Set up transport callbacks
+    // Transport → decoder pipeline
     impl_->transport->onVideoFrame = [this](const VideoFrame& frame) {
-        impl_->synchronizer->pushVideoFrame(frame);
+        // Feed raw transport data into video decoder
+        impl_->video_decoder->decode(frame.data, frame.timestamp_us);
     };
 
     impl_->transport->onAudioFrame = [this](const AudioFrame& frame) {
-        impl_->synchronizer->pushAudioFrame(frame);
+        impl_->audio_decoder->decode(frame.data, frame.timestamp_us);
     };
 
     impl_->transport->onConnectionStateChanged = [this](bool connected) {
         impl_->connected = connected;
-        if (!connected) {
-            scheduleReconnect();
-        }
-    };
-
-    // Set up decoder callbacks
-    impl_->video_decoder->onFrameDecoded = [this](const VideoFrame& frame) {
-        pushVideoFrameToOBS(frame);
-    };
-
-    impl_->audio_decoder->onFrameDecoded = [this](const AudioFrame& frame) {
-        pushAudioFrameToOBS(frame);
-    };
-}
-
 StreamReceiver::~StreamReceiver() {
     disconnect();
     delete impl_;
@@ -93,12 +83,14 @@ void StreamReceiver::scheduleReconnect() {
         if (impl_->stop_reconnect_) return;
 
         blog(LOG_INFO, "[Ojowacam] Reconnecting device %s (attempt %d/%d)",
-             impl_->device_id.c_str(), impl_->reconnect_attempts_, impl_->kMaxReconnectAttempts);
+             impl_->device_id.c_str(), impl_->reconnect_attempts_,
+             impl_->kMaxReconnectAttempts);
         connect(impl_->device_id, impl_->signaling_url);
     });
 }
 
-bool StreamReceiver::connect(const std::string& device_id, const std::string& signaling_url) {
+bool StreamReceiver::connect(const std::string& device_id,
+                              const std::string& signaling_url) {
     impl_->device_id = device_id;
     impl_->signaling_url = signaling_url;
     impl_->reconnect_attempts_ = 0;
@@ -121,20 +113,19 @@ bool StreamReceiver::connect(const std::string& device_id, const std::string& si
     impl_->transport->createOffer();
     impl_->connected = true;
 
-    blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
-    return true;
-}
-
-void StreamReceiver::disconnect() {
-    impl_->transport->disconnect();
-    impl_->connected = false;
-    impl_->synchronizer->reset();
-}
-
 void StreamReceiver::pushVideoFrameToOBS(const VideoFrame& frame) {
     if (!impl_->video_source) return;
 
-    // Push frame to OBS video source
+    // Convert to RGBA texture via FrameConverter
+    gs_texture_t* texture = impl_->frame_converter->convertToTexture(
+        frame.data, frame.width, frame.height, nullptr);
+
+    if (!texture) return;
+
+    // Push to OBS video source using the converted texture data
+    // obs_source_output_video expects raw pixel data; we upload to texture
+    // first, then the source's render callback will sample from it.
+    // For async video sources, we push a frame with the texture data pointer.
     obs_source_frame obs_frame{};
     obs_frame.format = VIDEO_FORMAT_RGBA;
     obs_frame.width = frame.width;
@@ -149,7 +140,6 @@ void StreamReceiver::pushVideoFrameToOBS(const VideoFrame& frame) {
 void StreamReceiver::pushAudioFrameToOBS(const AudioFrame& frame) {
     if (!impl_->audio_source) return;
 
-    // Push audio samples to OBS audio source
     obs_source_output_audio(impl_->audio_source,
                             frame.samples.data(),
                             frame.samples.size(),
@@ -172,3 +162,26 @@ bool StreamReceiver::isConnected() const {
 }
 
 } // namespace ojowacam
+    blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
+    return true;
+}
+
+void StreamReceiver::disconnect() {
+    impl_->transport->disconnect();
+    impl_->connected = false;
+    impl_->synchronizer->reset();
+}
+        if (!connected) {
+            scheduleReconnect();
+        }
+    };
+
+    // Decoder → OBS output pipeline
+    impl_->video_decoder->onFrameDecoded = [this](const VideoFrame& frame) {
+        pushVideoFrameToOBS(frame);
+    };
+
+    impl_->audio_decoder->onFrameDecoded = [this](const AudioFrame& frame) {
+        pushAudioFrameToOBS(frame);
+    };
+}

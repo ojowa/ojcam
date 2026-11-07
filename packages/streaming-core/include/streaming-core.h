@@ -7,12 +7,21 @@
 
 namespace ojowacam {
 
+enum class VideoPixelFormat {
+    RGBA,     // 32-bit RGBA, 4 bytes per pixel
+    YUV420,   // I420 planar YUV 4:2:0
+    NV12,     // YUV 4:2:0 with interleaved UV
+    YUYV,     // YUV 4:2:2 packed
+    Unknown   // Passthrough, no conversion
+};
+
 struct VideoFrame {
     std::vector<uint8_t> data;
     int width = 0;
     int height = 0;
     int64_t timestamp_us = 0;
     int64_t ntp_time_ms = 0;
+    VideoPixelFormat format = VideoPixelFormat::Unknown;
 };
 
 struct AudioFrame {

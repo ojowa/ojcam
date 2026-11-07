@@ -44,6 +44,7 @@ void *ojowacam_camera_create(obs_data_t *settings, obs_source_t *source)
     data->height = 1080;
     data->currentFrame = nullptr;
     data->connected = NO;
+    data->pairingCode = nil;
 
     const char *deviceId = obs_data_get_string(settings, "device_id");
     const char *signalingUrl = obs_data_get_string(settings, "signaling_url");
@@ -67,6 +68,7 @@ void ojowacam_camera_destroy(void *data)
     }
     if (d->currentFrame) {
         CVPixelBufferRelease(d->currentFrame);
+        d->currentFrame = nullptr;
     }
     delete d;
 }
@@ -75,11 +77,14 @@ void ojowacam_camera_render(void *data, gs_effect_t *effect)
 {
     auto *d = static_cast<OjowacamCameraData *>(data);
 
-    if (!d->currentFrame) return;
+    gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
+    if (!image) return;
 
-    // Push the current frame to OBS video output
-    // In production, convert CVPixelBuffer to RGBA and use obs_source_output_video
-    UNUSED_PARAMETER(effect);
+    gs_texture_t *tex = gs_effect_get_texture(image);
+    if (!tex) return;
+
+    gs_effect_set_texture(image, tex);
+    gs_draw_sprite(tex, 0, d->width, d->height);
 }
 
 uint32_t ojowacam_camera_width(void *data)
@@ -92,22 +97,6 @@ uint32_t ojowacam_camera_height(void *data)
 {
     auto *d = static_cast<OjowacamCameraData *>(data);
     return d->height;
-}
-
-bool ojowacam_camera_get_default_size(obs_data_t *settings, uint32_t *cx, uint32_t *cy)
-{
-    *cx = 1920;
-    *cy = 1080;
-    return true;
-}
-    if (!resolvedDeviceId.empty() && !resolvedSignalingUrl.empty()) {
-        data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:source audioSource:nil];
-        [data->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
-        data->connected = data->streamReceiver.isConnected;
-    }
-
-    return data;
-}
 
 void ojowacam_camera_update(void *data, obs_data_t *settings)
 {
@@ -179,4 +168,20 @@ obs_properties_t *ojowacam_camera_properties(void *data)
     obs_properties_add_bool(props, "connected", "Connected");
 
     return props;
+}
+}
+
+bool ojowacam_camera_get_default_size(obs_data_t *settings, uint32_t *cx, uint32_t *cy)
+{
+    *cx = 1920;
+    *cy = 1080;
+    return true;
+}
+    if (!resolvedDeviceId.empty() && !resolvedSignalingUrl.empty()) {
+        data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:source audioSource:nil];
+        [data->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
+        data->connected = data->streamReceiver.isConnected;
+    }
+
+    return data;
 }

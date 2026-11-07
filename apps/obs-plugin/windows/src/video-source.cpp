@@ -79,13 +79,14 @@ void ojowacam_video_render(void *data, gs_effect_t *effect)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
 
-    if (!d->current_texture) return;
-
     gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
     if (!image) return;
 
-    gs_effect_set_texture(image, d->current_texture);
-    gs_draw_sprite(d->current_texture, 0, d->width, d->height);
+    gs_texture_t *tex = gs_effect_get_texture(image);
+    if (!tex) return;
+
+    gs_effect_set_texture(image, tex);
+    gs_draw_sprite(tex, 0, d->width, d->height);
 }
 
 uint32_t ojowacam_video_width(void *data)
