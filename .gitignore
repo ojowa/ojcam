@@ -28,6 +28,7 @@ node_modules/
 **/android/.gradle/
 **/android/local.properties
 **/android/keystore.jks
+**/android/ojowacam-upload-keystore.jks
 !**/android/gradlew
 !**/android/gradlew.bat
 
