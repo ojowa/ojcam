@@ -210,7 +210,14 @@ jobs:
             Sort-Object { [version]$_.Directory.Parent.Parent.Name } -Descending |
             Select-Object -First 1
           if (-not $d3dCompiler) {
-            throw "Could not locate the x64 Windows SDK d3dcompiler.lib under $sdkLibRoot"
+            # Windows SDK 10.0.26100+ removed d3dcompiler.lib; fall back to d3dcompiler_47.lib
+            $d3dCompiler = Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler_47.lib -Recurse -File |
+              Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler_47\.lib$' } |
+              Sort-Object { [version]$_.Directory.Parent.Parent.Name } -Descending |
+              Select-Object -First 1
+          }
+          if (-not $d3dCompiler) {
+            throw "Could not locate the x64 Windows SDK d3dcompiler.lib or d3dcompiler_47.lib under $sdkLibRoot"
           }
           $cmakeFile = 'obs-studio/libobs-d3d11/CMakeLists.txt'
           $contents = Get-Content -Raw $cmakeFile
