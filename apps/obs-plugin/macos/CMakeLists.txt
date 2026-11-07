@@ -40,6 +40,13 @@ set_target_properties(ojowacam-obs-macos PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs
 )
 
+# Link WebRTC if available
+find_package(WebRTC QUIET)
+if(WebRTC_FOUND)
+    target_link_libraries(ojowacam-obs-macos PRIVATE WebRTC::WebRTC)
+    target_compile_definitions(ojowacam-obs-macos PRIVATE OJO_WEBRTC_ENABLED)
+endif()
+
 # Copy macOS module.json next to the plugin binary
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/data/module.json
                ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs/module.json

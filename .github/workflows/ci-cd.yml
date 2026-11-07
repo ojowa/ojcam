@@ -216,6 +216,49 @@ jobs:
           cmake --install obs-studio/build --prefix $OBS_INSTALL_PREFIX
           echo "OBS installed to $OBS_INSTALL_PREFIX"
 
+      - name: Install WebRTC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:WEBRTC_PREFIX = "$env:GITHUB_WORKSPACE/webrtc-install"
+          # Use vcpkg to install WebRTC on Windows
+          & "$env:VCPKG_ROOT\vcpkg.exe" install webrtc:x64-windows --triplet x64-windows --prefix $env:WEBRTC_PREFIX
+          Write-Host "WebRTC installed to $env:WEBRTC_PREFIX"
+
+      - name: Install WebRTC (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export WEBRTC_PREFIX="$GITHUB_WORKSPACE/webrtc-install"
+          brew install webrtc || true
+          echo "WebRTC installed via Homebrew"
+
+      - name: Build streaming-core (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:STREAMING_CORE_PREFIX = "$env:GITHUB_WORKSPACE/streaming-core-install"
+          cmake -S packages/streaming-core -B packages/streaming-core/build ${{ matrix.cmake_generator }} `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="$env:OBS_INSTALL_PREFIX;$env:WEBRTC_PREFIX" `
+            -DCMAKE_INSTALL_PREFIX=$env:STREAMING_CORE_PREFIX
+          cmake --build packages/streaming-core/build --config Release --target streaming-core -j 4
+          cmake --install packages/streaming-core/build --prefix $env:STREAMING_CORE_PREFIX --config Release
+          Write-Host "streaming-core installed to $env:STREAMING_CORE_PREFIX"
+
+      - name: Build streaming-core (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export STREAMING_CORE_PREFIX="$GITHUB_WORKSPACE/streaming-core-install"
+          cmake -S packages/streaming-core -B packages/streaming-core/build ${{ matrix.cmake_generator }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX;$WEBRTC_PREFIX" \
+            -DCMAKE_INSTALL_PREFIX=$STREAMING_CORE_PREFIX
+          cmake --build packages/streaming-core/build --target streaming-core -j $(sysctl -n hw.ncpu)
+          cmake --install packages/streaming-core/build --prefix $STREAMING_CORE_PREFIX
+          echo "streaming-core installed to $STREAMING_CORE_PREFIX"
+
       - name: Validate OBS installation (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -275,9 +318,10 @@ jobs:
         shell: pwsh
         run: |
           $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
+          $env:STREAMING_CORE_PREFIX = "$env:GITHUB_WORKSPACE/streaming-core-install"
           cmake -S apps/obs-plugin -B apps/obs-plugin/build ${{ matrix.cmake_generator }} `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_PREFIX_PATH=$env:OBS_INSTALL_PREFIX
+            -DCMAKE_PREFIX_PATH="$env:OBS_INSTALL_PREFIX;$env:STREAMING_CORE_PREFIX;$env:WEBRTC_PREFIX"
           Write-Host "Ojowacam plugin configure complete"
 
       - name: Configure Ojowacam OBS Plugin (macOS)
@@ -285,9 +329,10 @@ jobs:
         shell: bash
         run: |
           export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          export STREAMING_CORE_PREFIX="$GITHUB_WORKSPACE/streaming-core-install"
           cmake -S apps/obs-plugin -B apps/obs-plugin/build ${{ matrix.cmake_generator }} \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH=$OBS_INSTALL_PREFIX
+            -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX;$STREAMING_CORE_PREFIX;$WEBRTC_PREFIX"
           echo "Ojowacam plugin configure complete"
 
       - name: Build Ojowacam OBS Plugin (Windows)
