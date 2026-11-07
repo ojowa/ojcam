@@ -55,6 +55,11 @@ android {
     }
 }
 
+repositories {
+    google()
+    mavenCentral()
+}
+
 dependencies {
     implementation("com.facebook.react:react-native:+")
     implementation("org.webrtc:google-webrtc:1.0.32006")
