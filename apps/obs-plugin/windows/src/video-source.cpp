@@ -1,6 +1,8 @@
 #include "video-source.h"
 #include "stream-receiver.h"
 #include "frame-converter.h"
+#include "device-manager.h"
+#include <algorithm>
 
 struct OjowacamVideoData {
     obs_source_t *source;
@@ -9,6 +11,8 @@ struct OjowacamVideoData {
     ojowacam::StreamReceiver* stream_receiver = nullptr;
     ojowacam::FrameConverter* frame_converter = nullptr;
     gs_texture_t* current_texture = nullptr;
+    std::string pairing_code;
+    bool connected = false;
 };
 
 obs_source_info ojowacam_video_source_info = [] {
@@ -36,13 +40,23 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
     data->height = 1080;
     data->frame_converter = new ojowacam::FrameConverter();
 
-    // Read settings
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
-    
-    if (device_id && *device_id && signaling_url && *signaling_url) {
+    const char* pairing_code = obs_data_get_string(settings, "pairing_code");
+
+    std::string resolved_device_id = device_id ? device_id : "";
+    std::string resolved_signaling_url = signaling_url ? signaling_url : "";
+    if (pairing_code && *pairing_code) {
+        resolved_device_id = pairing_code;
+        if (resolved_signaling_url.empty()) {
+            resolved_signaling_url = "ws://localhost:8765";
+        }
+    }
+
+    if (!resolved_device_id.empty() && !resolved_signaling_url.empty()) {
         data->stream_receiver = new ojowacam::StreamReceiver(source, nullptr);
-        data->stream_receiver->connect(device_id, signaling_url);
+        data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
+        data->connected = data->stream_receiver->isConnected();
     }
 
     return data;
@@ -97,19 +111,33 @@ bool ojowacam_video_get_default_size(obs_data_t *settings, uint32_t *cx, uint32_
 void ojowacam_video_update(void *data, obs_data_t *settings)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
-    
+
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
+    const char* pairing_code = obs_data_get_string(settings, "pairing_code");
+
+    std::string resolved_device_id = device_id ? device_id : "";
+    std::string resolved_signaling_url = signaling_url ? signaling_url : "";
+
+    if (pairing_code && *pairing_code) {
+        resolved_device_id = pairing_code;
+        if (resolved_signaling_url.empty()) {
+            resolved_signaling_url = "ws://localhost:8765";
+        }
+    }
 
     if (d->stream_receiver) {
         d->stream_receiver->disconnect();
+        delete d->stream_receiver;
+        d->stream_receiver = nullptr;
     }
-    
-    if (device_id && *device_id && signaling_url && *signaling_url) {
-        if (!d->stream_receiver) {
-            d->stream_receiver = new ojowacam::StreamReceiver(d->source, nullptr);
+    d->connected = false;
+
+    if (!resolved_device_id.empty() && !resolved_signaling_url.empty()) {
+        d->stream_receiver = new ojowacam::StreamReceiver(d->source, nullptr);
+        if (d->stream_receiver->connect(resolved_device_id, resolved_signaling_url)) {
+            d->connected = true;
         }
-        d->stream_receiver->connect(device_id, signaling_url);
     }
 }
 
@@ -118,7 +146,29 @@ obs_properties_t *ojowacam_video_properties(void *data)
     auto *props = obs_properties_create();
     UNUSED_PARAMETER(data);
 
-    obs_properties_add_text(props, "device_id", "Device ID", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, "pairing_code", "Pairing Code (QR/manual)", OBS_TEXT_DEFAULT);
+
+    obs_property_t *device_list = obs_properties_add_list(
+        props, "device_id", "Device", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+
+    auto *dm = ojowacam::DeviceManager::GetInstance();
+    auto devices = dm->GetDevices();
+    if (devices.empty()) {
+        obs_property_list_add_string(device_list, "No devices found", "");
+    } else {
+        for (const auto& dev : devices) {
+            std::string label = dev.device_name + " (" + dev.ip_address + ")";
+            obs_property_list_add_string(device_list, label.c_str(), dev.device_id.c_str());
+        }
+    }
+
+    obs_properties_add_button(props, "refresh_devices", "Refresh Devices",
+        [](obs_properties_t*, obs_property_t*, void*) {
+            auto *dm = ojowacam::DeviceManager::GetInstance();
+            (void)dm;
+            return true;
+        });
+
     obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://)", OBS_TEXT_DEFAULT);
     obs_properties_add_button(props, "connect", "Connect to Device", [](obs_properties_t*, obs_property_t*, void* data) {
         auto *d = static_cast<OjowacamVideoData*>(data);
@@ -127,6 +177,9 @@ obs_properties_t *ojowacam_video_properties(void *data)
         obs_data_release(settings);
         return true;
     });
+
+    obs_properties_add_bool(props, "connected", "Connected");
+
     obs_properties_add_int(props, "resolution_width", "Width", 1, 7680, 1);
     obs_properties_add_int(props, "resolution_height", "Height", 1, 4320, 1);
     obs_properties_add_int(props, "fps", "Frame Rate", 1, 60, 1);

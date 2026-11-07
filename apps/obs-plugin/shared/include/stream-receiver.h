@@ -4,6 +4,7 @@
 #include <decoder/video-decoder.h>
 #include <audio/audio-decoder.h>
 #include <synchronization/stream-synchronizer.h>
+#include <frame-converter.h>
 #include <obs-module.h>
 #include <string>
 #include <memory>
