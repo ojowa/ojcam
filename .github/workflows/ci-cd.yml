@@ -207,7 +207,8 @@ jobs:
         run: |
           cmake -S obs-studio -B obs-studio/build ${{ matrix.cmake_generator }} `
             -DCMAKE_BUILD_TYPE=Release `
-            -DBUILD_OBS=OFF `
+            -DENABLE_UI=OFF `
+            -DENABLE_PLUGINS=OFF `
             -DENABLE_SCRIPTING=OFF `
             -DENABLE_STREAMFX=OFF `
             -DENABLE_SPEECH_TO_TEXT=OFF `
@@ -222,7 +223,8 @@ jobs:
         run: |
           cmake -S obs-studio -B obs-studio/build -G Xcode \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_OBS=OFF \
+            -DENABLE_UI=OFF \
+            -DENABLE_PLUGINS=OFF \
             -DENABLE_SCRIPTING=OFF \
             -DENABLE_STREAMFX=OFF \
             -DENABLE_SPEECH_TO_TEXT=OFF \
