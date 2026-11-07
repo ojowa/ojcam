@@ -1,4 +1,4 @@
-#include "usb/usb-transport.h"
+#include "transport/usb/usb-transport.h"
 #include <thread>
 #include <chrono>
 #include <cstdlib>
