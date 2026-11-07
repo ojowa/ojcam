@@ -61,6 +61,6 @@ repositories {
 }
 
 dependencies {
-    implementation("com.facebook.react:react-native:+")
-    implementation("org.webrtc:google-webrtc:1.0.32006")
+    // React Native and WebRTC dependencies are managed through Expo SDK,
+    // not as direct Gradle dependencies in this native module directory
 }
