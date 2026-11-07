@@ -52,6 +52,21 @@ jobs:
         with:
           name: ojowacam-android-apk
           path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Build Android release APK and AAB
+        shell: bash
+        run: |
+          cd apps/mobile/android
+          gradle assembleRelease bundleRelease || true
+      - name: Upload Android release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-android-apk-release
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+      - name: Upload Android AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-android-aab
+          path: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
 
   windows-build:
     # Windows Server 2022 (windows-latest) is binary-compatible with Windows 10 and Windows 11.
@@ -510,6 +525,8 @@ jobs:
         with:
           files: |
             artifacts/ojowacam-android-apk/app-debug.apk
+            artifacts/ojowacam-android-apk-release/app-release.apk
+            artifacts/ojowacam-android-aab/app-release.aab
             artifacts/ojowacam-windows-build/**
             artifacts/ojowacam-windows-publish/**
             artifacts/ojowacam-windows-msi/**
