@@ -11,6 +11,11 @@ const char *obs_module_name(void)
     return "Ojowacam OBS Plugin";
 }
 
+const char *obs_module_ver(void)
+{
+    return "1.0.0";
+}
+
 bool obs_module_load(void)
 {
     // Register Ojowacam video source

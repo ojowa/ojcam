@@ -15,12 +15,13 @@ obs_source_info ojowacam_video_source_info = [] {
     obs_source_info info{};
     info.id = "ojowacam_video_source";
     info.type = OBS_SOURCE_TYPE_INPUT;
-    info.output_flags = OBS_SOURCE_VIDEO;
+    info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_ASYNC_VIDEO;
     info.get_name = [](void *) -> const char * { return "Ojowacam Video"; };
     info.create = ojowacam_video_create;
     info.destroy = ojowacam_video_destroy;
     info.get_width = ojowacam_video_width;
     info.get_height = ojowacam_video_height;
+    info.get_default_size = ojowacam_video_get_default_size;
     info.video_render = ojowacam_video_render;
     info.update = ojowacam_video_update;
     info.get_properties = ojowacam_video_properties;
@@ -83,6 +84,14 @@ uint32_t ojowacam_video_height(void *data)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
     return d->height;
+}
+
+bool ojowacam_video_get_default_size(obs_data_t *settings, uint32_t *cx, uint32_t *cy)
+{
+    UNUSED_PARAMETER(settings);
+    *cx = 1920;
+    *cy = 1080;
+    return true;
 }
 
 void ojowacam_video_update(void *data, obs_data_t *settings)

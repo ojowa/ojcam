@@ -10,6 +10,7 @@ extern "C" {
 bool obs_module_load(void);
 void obs_module_unload(void);
 const char *obs_module_name(void);
+const char *obs_module_ver(void);
 
 #ifdef __cplusplus
 }
