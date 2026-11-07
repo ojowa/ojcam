@@ -237,8 +237,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # libobs-opengl depends on libobs; build it too because OBS install rules include it.
-          cmake --build obs-studio/build --config Release --target libobs-opengl -j 4
+          # OBS install rules include both renderer modules, so build both before installing.
+          cmake --build obs-studio/build --config Release --target libobs-opengl libobs-d3d11 -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS runtime libraries build complete"
 
