@@ -485,11 +485,19 @@ jobs:
 
   security-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
       - name: Run dependency vulnerability scan
         run: npm audit --audit-level=high || true
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, cpp, csharp, java, swift
       - name: Run SAST scan (CodeQL)
         uses: github/codeql-action/analyze@v3
 
