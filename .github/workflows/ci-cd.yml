@@ -156,7 +156,7 @@ jobs:
             -Uri "https://github.com/obsproject/obs-deps/releases/download/$depsVersion/windows-deps-$depsVersion-x64.zip" `
             -OutFile $depsArchive
           Expand-Archive -Path $depsArchive -DestinationPath $depsPath
-          Add-Content -Path $env:GITHUB_ENV -Value "OBS_DepsPath=$depsPath"
+          Add-Content -Path $env:GITHUB_ENV -Value "OBS_DepsPath64=$depsPath"
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
