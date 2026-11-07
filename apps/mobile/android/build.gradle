@@ -30,7 +30,21 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
+        }
+    }
+    signingConfigs {
+        release {
+            storeFile file(System.env.ANDROID_KEYSTORE_PATH ?: "ojowacam-upload-keystore.jks")
+            storePassword System.env.ANDROID_KEYSTORE_PASSWORD
+            keyAlias "upload"
+            keyPassword System.env.ANDROID_KEY_PASSWORD
+        }
+        debug {
+            storeFile file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
         }
     }
     compileOptions {
