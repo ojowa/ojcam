@@ -139,7 +139,6 @@ public class WindowsUSBService
             StatusChanged?.Invoke(this, $"USB tethering detection error: {ex.Message}");
         }
     }
-}
     public async Task<bool> StartADBReverseAsync(string deviceId, int localPort, int remotePort)
     {
         try
@@ -215,4 +214,3 @@ public class WindowsUSBService
 
     public List<USBDeviceInfo> GetDevices() => _devices.ToList();
 }
-

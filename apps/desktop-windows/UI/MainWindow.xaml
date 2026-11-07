@@ -66,10 +66,10 @@
 
                 <!-- Controls Overlay -->
                 <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Right" 
-                            Margin="20" Orientation="Horizontal" Spacing="10">
-                    <Button Content="Switch Camera" Style="{StaticResource PrimaryButton}" 
+                            Margin="20" Orientation="Horizontal">
+                    <Button Content="Switch Camera" Style="{StaticResource PrimaryButton}" Margin="0,0,10,0"
                             Click="SwitchCamera_Click" IsEnabled="False" x:Name="SwitchCameraButton" />
-                    <Button Content="Torch" Style="{StaticResource PrimaryButton}" 
+                    <Button Content="Torch" Style="{StaticResource PrimaryButton}" Margin="0,0,10,0"
                             Click="Torch_Click" IsEnabled="False" x:Name="TorchButton" />
                     <Button Content="Stop Streaming" Background="#FF3B30" 
                             Foreground="White" Padding="16,8" Click="StopStreaming_Click" IsEnabled="False" x:Name="StopStreamingButton" />
