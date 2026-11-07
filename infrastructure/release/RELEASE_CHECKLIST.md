@@ -28,7 +28,9 @@
 
 ### Windows Build
 - Release build in .NET 8
-- MSI installer created with WiX
+- Self-contained desktop EXE published
+- Desktop MSI installer created with WiX
+- OBS plugin MSI installer created with WiX
 - App tested on Windows 10 and Windows 11
 - ADB detected and reverse port forwarding works
 - OBS Studio integration verified (27.0+)
@@ -103,7 +105,9 @@
 |----------|----------|----------|
 | Ojowacam.apk | Android | infrastructure/release/ |
 | Ojowacam.aab | Android | infrastructure/release/ |
+| Ojowacam.Desktop.exe | Windows | GitHub Actions `ojowacam-windows-publish` artifact |
 | Ojowacam.Desktop.msi | Windows | infrastructure/release/ |
+| Ojowacam.ObsPlugin.msi | Windows | GitHub Actions `ojowacam-obs-plugin-msi` artifact |
 | Ojowacam.Desktop.dmg | macOS | infrastructure/release/ |
 | Ojowacam.OBS.plugin.zip | Windows/macOS | infrastructure/release/ |
 | Ojowacam.Source.zip | Source code | GitHub release |

@@ -89,9 +89,15 @@ jobs:
       - name: Build Windows MSI installer
         shell: pwsh
         run: |
-          cd infrastructure/installers
-          candle.exe ojowacam-desktop.wxs -o ojowacam-desktop.wixobj
-          light.exe ojowacam-desktop.wixobj -o Ojowacam.Desktop.msi
+          heat.exe dir publish -cg DesktopPublishFiles -dr INSTALLFOLDER -srd -scom -sreg -ag -t infrastructure/installers/desktop-publish-x64.xsl -var var.PublishDir -out infrastructure/installers/desktop-publish-files.wxs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'publish'
+          candle.exe "-dPublishDir=$publishDir" -ext WixUIExtension -out infrastructure/installers/ojowacam-desktop.wixobj infrastructure/installers/ojowacam-desktop.wxs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          candle.exe "-dPublishDir=$publishDir" -out infrastructure/installers/desktop-publish-files.wixobj infrastructure/installers/desktop-publish-files.wxs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          light.exe -ext WixUIExtension -out infrastructure/installers/Ojowacam.Desktop.msi infrastructure/installers/ojowacam-desktop.wixobj infrastructure/installers/desktop-publish-files.wixobj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload Windows MSI installer
         uses: actions/upload-artifact@v4
         with:
@@ -378,7 +384,18 @@ jobs:
         shell: pwsh
         run: |
           cmake --build apps/obs-plugin/build --config Release --target ojowacam-obs -j 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "Ojowacam plugin build complete"
+
+      - name: Install WiX Toolset for OBS Plugin MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y
+          }
+          Get-Command candle.exe
+          Get-Command light.exe
 
       - name: Build Ojowacam OBS Plugin (macOS)
         if: runner.os == 'macOS'
@@ -393,13 +410,38 @@ jobs:
         run: |
           $certPath = "$env:RUNNER_TEMP/ojowacam-signing-cert.pfx"
           [System.IO.File]::WriteAllBytes($certPath, [System.Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT))
-          $dllPath = Get-ChildItem -Path "apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/*.dll" | Select-Object -First 1
+          $dllPath = Get-ChildItem -Path "apps/obs-plugin/build/data/obs-plugins/ojowacam-obs" -Filter "*.dll" -Recurse | Select-Object -First 1
           if ($dllPath) {
             & signtool sign /f $certPath /p $env:WINDOWS_SIGNING_CERT_PASSWORD /t http://timestamp.digicert.com /v $dllPath.FullName
             Write-Host "Windows OBS plugin signed successfully"
           } else {
             Write-Host "No DLL found to sign"
           }
+
+      - name: Build Ojowacam OBS Plugin MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pluginOutput = Join-Path $env:GITHUB_WORKSPACE 'apps/obs-plugin/build/data/obs-plugins/ojowacam-obs'
+          $pluginDll = Get-ChildItem -Path $pluginOutput -Filter 'ojowacam-obs.dll' -Recurse | Select-Object -First 1
+          $moduleJson = Join-Path $pluginOutput 'module.json'
+          if (-not $pluginDll) { throw 'OBS plugin DLL was not built.' }
+          if (-not (Test-Path $moduleJson)) { throw 'OBS plugin module.json was not generated.' }
+          $pluginStage = Join-Path $env:RUNNER_TEMP 'ojowacam-obs-plugin-msi'
+          New-Item -ItemType Directory -Force -Path $pluginStage | Out-Null
+          Copy-Item -LiteralPath $pluginDll.FullName -Destination (Join-Path $pluginStage 'ojowacam-obs.dll')
+          Copy-Item -LiteralPath $moduleJson -Destination (Join-Path $pluginStage 'module.json')
+          candle.exe "-dPluginDir=$pluginStage" -out apps/obs-plugin/build/ojowacam-obs-plugin.wixobj infrastructure/installers/ojowacam-obs-plugin.wxs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          light.exe -out apps/obs-plugin/build/Ojowacam.ObsPlugin.msi apps/obs-plugin/build/ojowacam-obs-plugin.wixobj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Ojowacam OBS Plugin MSI
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-obs-plugin-msi
+          path: apps/obs-plugin/build/Ojowacam.ObsPlugin.msi
 
       - name: Code sign and notarize macOS OBS Plugin
         if: runner.os == 'macOS' && env.APPLE_DEVELOPER_ID != ''
@@ -433,6 +475,7 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: |
             apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.dll
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/module.json
             apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.pdb
             apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.lib
             apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.exp
@@ -475,6 +518,7 @@ jobs:
             artifacts/ojowacam-windows-build/**
             artifacts/ojowacam-windows-publish/**
             artifacts/ojowacam-windows-msi/**
+            artifacts/ojowacam-obs-plugin-msi/**
             artifacts/ojowacam-macos-build/**
             artifacts/ojowacam-obs-windows/**
             artifacts/ojowacam-obs-macos/**
