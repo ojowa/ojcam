@@ -2,6 +2,8 @@
 
 #include "../streaming-core.h"
 #include <chrono>
+#include <mutex>
+#include <optional>
 
 namespace ojowacam {
 
@@ -26,6 +28,7 @@ public:
 private:
     std::vector<VideoFrame> video_queue_;
     std::vector<AudioFrame> audio_queue_;
+    std::mutex mutex_;
     int64_t base_ntp_ms_ = 0;
     bool initialized_ = false;
 };

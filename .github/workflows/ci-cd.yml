@@ -237,7 +237,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake --build obs-studio/build --config Release --target obs -j 4
+          cmake --build obs-studio/build --config Release --target libobs -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS build complete"
 
@@ -245,7 +245,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          cmake --build obs-studio/build --config Release --target obs -j $(sysctl -n hw.ncpu)
+          cmake --build obs-studio/build --config Release --target libobs -j $(sysctl -n hw.ncpu)
           if [ $? -ne 0 ]; then exit 1; fi
           echo "OBS build complete"
 
