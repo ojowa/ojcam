@@ -21,6 +21,10 @@ Ojowacam's Android mobile app is built and executed entirely through GitHub Acti
 
 The job uses `continue-on-error: true`, matching the other build jobs, so an emulator or device issue never blocks the workflow or a release.
 
+## Pre-requisite fix (build.gradle)
+
+The `android-build` job only emits the debug APK artifact if `:assembleDebug` succeeds. The checked-in `apps/mobile/android/build.gradle` previously declared an explicit `debug` signing config pointing at a relative `debug.keystore` file that does not exist in CI, causing `:validateSigningDebug` to fail. That block was removed so AGP falls back to its auto-generated debug keystore (`$ANDROID_HOME/.android/debug.keystore`), allowing the debug APK to build and the artifact to be published.
+
 ## Required GitHub secrets
 
 Only needed for release APK/AAB signing (debug build needs none):
