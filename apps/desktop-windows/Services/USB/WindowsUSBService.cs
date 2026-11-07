@@ -107,7 +107,7 @@ public class WindowsUSBService
             foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
             {
                 if (nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet ||
-                    nic.NetworkInterfaceType == NetworkInterfaceType.PointToPointProtocol)
+                    nic.NetworkInterfaceType == NetworkInterfaceType.Ppp)
                 {
                     string name = nic.Name.ToLower();
                     if (name.Contains("usb") || name.Contains("rndis") || name.Contains("ethernet"))

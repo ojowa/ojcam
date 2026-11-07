@@ -14,6 +14,7 @@ public class StreamReceiverService
 {
     private readonly SignalingService _signaling;
     private readonly WebRTCReceiverService _webRTC;
+    private readonly WebRTCCallbacks _webRTCCallbacks;
     private readonly H264VideoDecoder _videoDecoder;
     private readonly AudioRenderer _audioRenderer;
 
@@ -29,7 +30,8 @@ public class StreamReceiverService
     public StreamReceiverService(string signalingUrl)
     {
         _signaling = new SignalingService(signalingUrl);
-        _webRTC = new WebRTCReceiverService(new WebRTCCallbacks());
+        _webRTCCallbacks = new WebRTCCallbacks();
+        _webRTC = new WebRTCReceiverService(_webRTCCallbacks);
         _videoDecoder = new H264VideoDecoder();
         _audioRenderer = new AudioRenderer();
 
@@ -48,7 +50,7 @@ public class StreamReceiverService
             });
         };
 
-        _webRTC.OnLocalSdp += async (type, sdp) =>
+        _webRTCCallbacks.OnLocalSdp += async (type, sdp) =>
         {
             await _signaling.SendAsync(new SignalingMessage
             {
@@ -60,7 +62,7 @@ public class StreamReceiverService
             });
         };
 
-        _webRTC.OnIceCandidate += async (candidate) =>
+        _webRTCCallbacks.OnIceCandidate += async (candidate) =>
         {
             await _signaling.SendAsync(new SignalingMessage
             {
@@ -71,7 +73,7 @@ public class StreamReceiverService
             });
         };
 
-        _webRTC.OnVideoFrame += async (frameData) =>
+        _webRTCCallbacks.OnVideoFrame += async (frameData) =>
         {
             // Decode and raise event
             await _videoDecoder.DecodeAsync(frameData, DateTimeOffset.Now.ToUnixTimeMilliseconds());
@@ -95,16 +97,17 @@ public class StreamReceiverService
         await _signaling.ConnectAsync();
 
         // Send pairing request
+        var sessionId = Guid.NewGuid().ToString();
         await _signaling.SendAsync(new SignalingMessage
         {
             Type = "PAIRING_REQUEST",
             DeviceId = device.DeviceId,
-            SessionId = Guid.NewGuid().ToString()
+            SessionId = sessionId
         });
 
         // Initialize WebRTC
         await _webRTC.InitializeAsync();
-        await _webRTC.CreateOfferAsync(_signaling.ToString());
+        await _webRTC.CreateOfferAsync(sessionId);
 
         _isStreaming = true;
 
@@ -128,7 +131,7 @@ public class StreamReceiverService
         });
     }
 
-    private async Task OnSignalingMessage(object sender, SignalingMessage message)
+    private async void OnSignalingMessage(object? sender, SignalingMessage message)
     {
         switch (message.Type)
         {
