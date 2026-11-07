@@ -233,21 +233,22 @@ jobs:
           if [ $? -ne 0 ]; then exit 1; fi
           echo "OBS configure complete"
 
-      - name: Build OBS libobs (Windows)
+      - name: Build OBS runtime libraries (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake --build obs-studio/build --config Release --target libobs -j 4
+          # libobs-opengl depends on libobs; build it too because OBS install rules include it.
+          cmake --build obs-studio/build --config Release --target libobs-opengl -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Write-Host "OBS build complete"
+          Write-Host "OBS runtime libraries build complete"
 
-      - name: Build OBS libobs (macOS)
+      - name: Build OBS runtime libraries (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          cmake --build obs-studio/build --config Release --target libobs -j $(sysctl -n hw.ncpu)
+          cmake --build obs-studio/build --config Release --target libobs-opengl -j $(sysctl -n hw.ncpu)
           if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS build complete"
+          echo "OBS runtime libraries build complete"
 
       - name: Install OBS to local prefix (Windows)
         if: runner.os == 'Windows'
