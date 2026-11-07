@@ -200,6 +200,30 @@ jobs:
         run: |
           git clone --depth 1 --shallow-submodules --recurse-submodules --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git obs-studio
 
+      - name: Resolve Direct3D compiler library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdkLibRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib'
+          $d3dCompiler = Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler.lib -Recurse -File |
+            Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler\.lib$' } |
+            Sort-Object { [version]$_.Directory.Parent.Parent.Name } -Descending |
+            Select-Object -First 1
+          if (-not $d3dCompiler) {
+            throw "Could not locate the x64 Windows SDK d3dcompiler.lib under $sdkLibRoot"
+          }
+          $cmakeFile = 'obs-studio/libobs-d3d11/CMakeLists.txt'
+          $contents = Get-Content -Raw $cmakeFile
+          $original = 'target_link_libraries(libobs-d3d11 PRIVATE OBS::libobs d3d9 d3d11 d3dcompiler dxgi shcore)'
+          if (-not $contents.Contains($original)) {
+            throw "Could not find the expected Direct3D renderer link declaration in $cmakeFile"
+          }
+          $libraryPath = $d3dCompiler.FullName.Replace('\', '/')
+          $replacement = 'target_link_libraries(libobs-d3d11 PRIVATE OBS::libobs d3d9 d3d11 "' + $libraryPath + '" dxgi shcore)'
+          $contents = $contents.Replace($original, $replacement)
+          Set-Content -Path $cmakeFile -Value $contents -NoNewline
+          Write-Host "Using Direct3D compiler library: $($d3dCompiler.FullName)"
+
       - name: Configure OBS Studio (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
