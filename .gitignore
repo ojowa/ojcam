@@ -26,10 +26,10 @@ node_modules/
 
 # Android
 **/android/.gradle/
-**/android/gradlew
-**/android/gradlew.bat
 **/android/local.properties
 **/android/keystore.jks
+!**/android/gradlew
+!**/android/gradlew.bat
 
 # Windows
 **/obj/
