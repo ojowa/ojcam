@@ -29,12 +29,10 @@ android {
         versionName "1.0.0"
     }
     signingConfigs {
-        debug {
-            storeFile file("debug.keystore")
-            storePassword "android"
-            keyAlias "androiddebugkey"
-            keyPassword "android"
-        }
+        // Debug builds rely on AGP's auto-generated debug keystore
+        // ($ANDROID_HOME/.android/debug.keystore). An explicit debug
+        // signing config pointing at a relative debug.keystore file would
+        // fail in CI where no such file is checked in.
         if (hasReleaseSigning) {
             release {
                 storeFile file(System.env.ANDROID_KEYSTORE_PATH ?: "ojowacam-upload-keystore.jks")
