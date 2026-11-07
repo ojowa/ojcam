@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../../../../packages/streaming-core/include/transport/transport.h"
-#include "../../../../packages/streaming-core/include/decoder/video-decoder.h"
-#include "../../../../packages/streaming-core/include/audio/audio-decoder.h"
-#include "../../../../packages/streaming-core/include/synchronization/stream-synchronizer.h"
+#include "../../../packages/streaming-core/include/transport/transport.h"
+#include "../../../packages/streaming-core/include/decoder/video-decoder.h"
+#include "../../../packages/streaming-core/include/audio/audio-decoder.h"
+#include "../../../packages/streaming-core/include/synchronization/stream-synchronizer.h"
 #include <obs-module.h>
 #include <string>
 #include <memory>

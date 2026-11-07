@@ -93,9 +93,6 @@ jobs:
       - name: Build macOS companion
         run: |
           cd apps/desktop-macos && swift build -c release
-      - name: Build OBS plugin (macOS)
-        run: |
-          cd apps/obs-plugin/macos-plugin && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(sysctl -n hw.ncpu)
       - name: Run macOS unit tests
         run: |
           cd apps/desktop-macos && swift test
@@ -313,7 +310,7 @@ jobs:
         run: |
           $certPath = "$env:RUNNER_TEMP/ojowacam-signing-cert.pfx"
           [System.IO.File]::WriteAllBytes($certPath, [System.Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT))
-          $dllPath = Get-ChildItem -Path "apps/obs-plugin/build/Release/*.dll" | Select-Object -First 1
+          $dllPath = Get-ChildItem -Path "apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/*.dll" | Select-Object -First 1
           if ($dllPath) {
             & signtool sign /f $certPath /p $env:WINDOWS_SIGNING_CERT_PASSWORD /t http://timestamp.digicert.com /v $dllPath.FullName
             Write-Host "Windows OBS plugin signed successfully"
@@ -325,7 +322,7 @@ jobs:
         if: runner.os == 'macOS' && env.APPLE_DEVELOPER_ID != ''
         shell: bash
         run: |
-          BUNDLE_PATH=$(find apps/obs-plugin/build -name "*.bundle" -type d | head -1)
+          BUNDLE_PATH=$(find apps/obs-plugin/build/data/obs-plugins/ojowacam-obs -name "*.bundle" -type d | head -1)
           if [ -n "$BUNDLE_PATH" ]; then
             # Sign the bundle
             codesign --deep --force --sign "$APPLE_DEVELOPER_ID" "$BUNDLE_PATH"
@@ -352,10 +349,10 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            apps/obs-plugin/build/**/*.dll
-            apps/obs-plugin/build/**/*.pdb
-            apps/obs-plugin/build/**/*.lib
-            apps/obs-plugin/build/**/*.exp
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.dll
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.pdb
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.lib
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.exp
 
       - name: Upload macOS OBS Plugin artifact
         if: runner.os == 'macOS'
@@ -363,8 +360,8 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            apps/obs-plugin/build/**/*.bundle
-            apps/obs-plugin/build/**/*.dylib
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.bundle
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.dylib
 
   security-scan:
     runs-on: ubuntu-latest

@@ -5,9 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ------------------------------------------------------------------
-# Locate OBS Studio
+# Top-level OBS Plugin CMake
+# Dispatches to platform-specific subdirectory
 # ------------------------------------------------------------------
-# Try CMake config package first (OBS may install OBSConfig.cmake)
+
+# Locate OBS Studio (shared logic for all platforms)
 set(OBS_FOUND FALSE)
 
 set(_OBS_CONFIG_PATHS
@@ -26,11 +28,9 @@ foreach(_cfg IN LISTS _OBS_CONFIG_PATHS)
     endif()
 endforeach()
 
-# Fallback: manually locate OBS headers and libraries
 if(NOT OBS_FOUND)
     message(STATUS "OBS CMake config package not found, using manual detection")
 
-    # Find obs-module.h header
     find_path(OBS_INCLUDE_DIR
         NAMES obs-module.h
         PATHS "${CMAKE_PREFIX_PATH}/include"
@@ -38,7 +38,6 @@ if(NOT OBS_FOUND)
         NO_DEFAULT_PATH
     )
 
-    # Find obs library
     if(WIN32)
         find_library(OBS_LIB
             NAMES obs.lib obs
@@ -76,48 +75,18 @@ endif()
 message(STATUS "OBS_INCLUDE_DIRS: ${OBS_INCLUDE_DIRS}")
 message(STATUS "OBS_LIBRARIES: ${OBS_LIBRARIES}")
 
+# Include directories for shared code + OBS + streaming-core
 include_directories(
-    include
+    shared/include
     ${OBS_INCLUDE_DIRS}
     ../../../packages/streaming-core/include
 )
 
-# Source files
-set(SOURCES
-    src/plugin.cpp
-    src/video-source.cpp
-    src/audio-source.cpp
-    src/device-manager.cpp
-    src/source-properties.cpp
-    src/obs-registration.cpp
-    src/stream-receiver.cpp
-    src/frame-converter.cpp
-)
-
-# Determine plugin output filename based on platform
+# Select platform subdirectory
 if(WIN32)
-    set(PLUGIN_PREFIX "")
-    set(PLUGIN_SUFFIX ".dll")
+    add_subdirectory(windows)
 elseif(APPLE)
-    set(PLUGIN_PREFIX "")
-    set(PLUGIN_SUFFIX ".bundle")
+    add_subdirectory(macos)
 else()
-    set(PLUGIN_PREFIX "lib")
-    set(PLUGIN_SUFFIX ".so")
+    message(FATAL_ERROR "Unsupported platform for OBS plugin")
 endif()
-
-add_library(ojowacam-obs MODULE ${SOURCES})
-
-target_link_libraries(ojowacam-obs PRIVATE ${OBS_LIBRARIES} streaming-core)
-
-# Output to OBS plugins directory structure: obs-plugins/ojowacam-obs/
-set_target_properties(ojowacam-obs PROPERTIES
-    PREFIX ${PLUGIN_PREFIX}
-    SUFFIX ${PLUGIN_SUFFIX}
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs
-)
-
-# Copy module.json next to the plugin binary
-configure_file(${CMAKE_SOURCE_DIR}/data/module.json
-               ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs/module.json
-               COPYONLY)
