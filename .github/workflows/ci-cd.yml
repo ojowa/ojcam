@@ -70,6 +70,33 @@ jobs:
       - name: Build Windows application
         run: |
           dotnet build apps/desktop-windows/Ojowacam.Desktop.csproj -c Release
+      - name: Publish Windows application (self-contained .exe)
+        run: |
+          dotnet publish apps/desktop-windows/Ojowacam.Desktop.csproj -c Release -o ./publish -r win-x64 --self-contained
+      - name: Upload Windows publish artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-windows-publish
+          path: publish/
+      - name: Install WiX Toolset for MSI building
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y
+          }
+          Get-Command candle.exe
+          Get-Command light.exe
+      - name: Build Windows MSI installer
+        shell: pwsh
+        run: |
+          cd infrastructure/installers
+          candle.exe ojowacam-desktop.wxs -o ojowacam-desktop.wixobj
+          light.exe ojowacam-desktop.wixobj -o Ojowacam.Desktop.msi
+      - name: Upload Windows MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-windows-msi
+          path: infrastructure/installers/Ojowacam.Desktop.msi
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
@@ -166,7 +193,7 @@ jobs:
 
       - name: Clone OBS Studio SDK
         run: |
-          git clone --depth 1 --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git obs-studio
+          git clone --depth 1 --shallow-submodules --recurse-submodules --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git obs-studio
 
       - name: Configure OBS Studio (Windows)
         if: runner.os == 'Windows'
@@ -446,6 +473,8 @@ jobs:
           files: |
             artifacts/ojowacam-android-apk/app-debug.apk
             artifacts/ojowacam-windows-build/**
+            artifacts/ojowacam-windows-publish/**
+            artifacts/ojowacam-windows-msi/**
             artifacts/ojowacam-macos-build/**
             artifacts/ojowacam-obs-windows/**
             artifacts/ojowacam-obs-macos/**
