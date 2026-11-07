@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <memory>
 
 namespace ojowacam {
 
@@ -20,6 +21,82 @@ public:
 
     virtual bool isInitialized() const = 0;
 };
+
+// ---------------------------------------------------------------------------
+// Hardware-accelerated video decoder abstract base
+// Platform backends: FFmpeg (cross-platform), VideoToolbox (macOS), D3D11 (Windows)
+// ---------------------------------------------------------------------------
+class HardwareVideoDecoder : public VideoDecoder {
+public:
+    virtual ~HardwareVideoDecoder() = default;
+
+    // Create the best available hardware decoder for the current platform
+    static std::unique_ptr<HardwareVideoDecoder> Create(const std::string& codec);
+
+    // Query if hardware decoding is available on this platform
+    static bool IsHardwareDecodingAvailable();
+
+protected:
+    HardwareVideoDecoder() = default;
+};
+
+// ---------------------------------------------------------------------------
+// FFmpeg-based H264 hardware/software decoder (cross-platform)
+// ---------------------------------------------------------------------------
+class FFmpegH264Decoder final : public HardwareVideoDecoder {
+public:
+    FFmpegH264Decoder();
+    ~FFmpegH264Decoder() override;
+
+    bool initialize(int width, int height, const std::string& codec) override;
+    bool decode(const std::vector<uint8_t>& encoded_data, int64_t timestamp_us) override;
+    void release() override;
+    bool isInitialized() const override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+// ---------------------------------------------------------------------------
+// VideoToolbox H264 hardware decoder (macOS)
+// ---------------------------------------------------------------------------
+#if defined(__APPLE__)
+class VideoToolboxH264Decoder final : public HardwareVideoDecoder {
+public:
+    VideoToolboxH264Decoder();
+    ~VideoToolboxH264Decoder() override;
+
+    bool initialize(int width, int height, const std::string& codec) override;
+    bool decode(const std::vector<uint8_t>& encoded_data, int64_t timestamp_us) override;
+    void release() override;
+    bool isInitialized() const override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+#endif
+
+// ---------------------------------------------------------------------------
+// D3D11 H264 hardware decoder (Windows)
+// ---------------------------------------------------------------------------
+#if defined(_WIN32)
+class D3D11H264Decoder final : public HardwareVideoDecoder {
+public:
+    D3D11H264Decoder();
+    ~D3D11H264Decoder() override;
+
+    bool initialize(int width, int height, const std::string& codec) override;
+    bool decode(const std::vector<uint8_t>& encoded_data, int64_t timestamp_us) override;
+    void release() override;
+    bool isInitialized() const override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+#endif
 
 // ---------------------------------------------------------------------------
 // H264 NAL unit types
@@ -40,6 +117,9 @@ enum H264NalType {
     H264_NAL_FILLER = 12,
 };
 
+// ---------------------------------------------------------------------------
+// Software H264 decoder (NAL parsing + passthrough, already implemented)
+// ---------------------------------------------------------------------------
 class H264VideoDecoder final : public VideoDecoder {
 public:
     bool initialize(int width, int height, const std::string& codec) override;
