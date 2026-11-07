@@ -162,7 +162,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          cmake -S obs-studio -B obs-studio/build ${{ matrix.cmake_generator }} \
+          cmake -S obs-studio -B obs-studio/build -G Xcode \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_OBS=OFF \
             -DENABLE_SCRIPTING=OFF \
@@ -183,7 +183,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          cmake --build obs-studio/build --target obs -j $(sysctl -n hw.ncpu)
+          cmake --build obs-studio/build --config Release --target obs -j $(sysctl -n hw.ncpu)
           echo "OBS build complete"
 
       - name: Install OBS to local prefix (Windows)
