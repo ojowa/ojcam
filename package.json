@@ -1,24 +1,26 @@
 {
-  "name": "ojowacam",
-  "version": "1.0.0",
-  "private": true,
-  "description": "Your Phone. Your Camera. Your Studio.",
-  "main": "index.js",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
-  "scripts": {
-    "test": "echo \"Error: no test specified\\" && exit 1",
-    "build": "turbo build",
-    "dev": "turbo dev",
-    "lint": "turbo lint"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "devDependencies": {
-    "turbo": "^1.9.0"
-  }
+    "scripts":  {
+                    "lint":  "turbo lint",
+                    "build":  "turbo build",
+                    "dev":  "turbo dev",
+                    "test":  "echo \"Error: no test specified\" \u0026\u0026 exit 1"
+                },
+    "description":  "Your Phone. Your Camera. Your Studio.",
+    "type":  "commonjs",
+    "version":  "1.0.0",
+    "author":  "",
+    "devDependencies":  {
+                            "turbo":  "^1.9.0"
+                        },
+    "name":  "ojowacam",
+    "private":  true,
+    "workspaces":  [
+                       "apps/*",
+                       "packages/*"
+                   ],
+    "main":  "index.js",
+    "license":  "ISC",
+    "keywords":  [
+
+                 ]
 }
