@@ -145,6 +145,19 @@ jobs:
           }
           Write-Host "CMake version: $(cmake --version | Select-Object -First 1)"
 
+      - name: Install OBS dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $depsVersion = '2024-03-19'
+          $depsArchive = Join-Path $env:RUNNER_TEMP "windows-deps-$depsVersion-x64.zip"
+          $depsPath = Join-Path $env:RUNNER_TEMP 'obs-deps'
+          Invoke-WebRequest `
+            -Uri "https://github.com/obsproject/obs-deps/releases/download/$depsVersion/windows-deps-$depsVersion-x64.zip" `
+            -OutFile $depsArchive
+          Expand-Archive -Path $depsArchive -DestinationPath $depsPath
+          Add-Content -Path $env:GITHUB_ENV -Value "OBS_DepsPath=$depsPath"
+
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
