@@ -124,7 +124,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2022
             artifact_name: ojowacam-obs-windows
             cmake_generator: '-G "Visual Studio 17 2022" -A x64'
             shell: pwsh
@@ -167,6 +167,7 @@ jobs:
             -DENABLE_SPEECH_TO_TEXT=OFF `
             -DENABLE_VST=OFF `
             -DENABLE_WEBRTC=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS configure complete"
 
       - name: Configure OBS Studio (macOS)
