@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Ojowacam.Desktop</AssemblyName>
     <RootNamespace>Ojowacam.Desktop</RootNamespace>
+    <TargetPlatformVersion>10.0.18362.0</TargetPlatformVersion>
   </PropertyGroup>
 
   <ItemGroup>
