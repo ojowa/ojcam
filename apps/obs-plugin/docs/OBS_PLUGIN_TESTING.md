@@ -15,25 +15,24 @@ This document describes how to test the Ojowacam OBS plugin with a real OBS Stud
 
 ### Windows 10 / Windows 11
 
-The plugin installs to the OBS Studio plugins directory:
+The Windows MSI installs the plugin in OBS's recommended system-wide plugin directory:
 
 ```
-%APPDATA%\obs-studio\plugins\ojowacam-obs\
-  ├── ojowacam-obs.dll
-  └── module.json
+C:\ProgramData\obs-studio\plugins\ojowacam-obs\
+  ├── bin\64bit\ojowacam-obs.dll
+  └── data\module.json
 ```
 
 **Manual installation:**
 1. Close OBS Studio if running
-2. Navigate to `%APPDATA%\obs-studio\plugins\`
-3. Create folder `ojowacam-obs\`
-4. Copy `ojowacam-obs.dll` and `module.json` into it
+2. Navigate to `C:\ProgramData\obs-studio\plugins\`
+3. Create `ojowacam-obs\bin\64bit\` and `ojowacam-obs\data\`
+4. Copy `ojowacam-obs.dll` into `bin\64bit\` and `module.json` into `data\`
 5. Launch OBS Studio
 
 **Via MSI installer:**
-- Run `ojowacam-desktop.msi`
-- Select the "Ojowacam OBS Plugin" feature during installation
-- The plugin is installed to the correct AppData location automatically
+- Run `Ojowacam.ObsPlugin.msi` as an administrator
+- The plugin is installed for all Windows users in the OBS plugin directory
 
 ### macOS
 
@@ -124,10 +123,10 @@ The plugin installs to:
 
 | Cause | Solution |
 |-------|----------|
-| Wrong folder | Verify plugin is in `%APPDATA%\obs-studio\plugins\ojowacam-obs\` (Windows) or `~/Library/Application Support/obs-studio/plugins/ojowacam-obs\` (macOS) |
+| Wrong folder | Verify the DLL is in `C:\ProgramData\obs-studio\plugins\ojowacam-obs\bin\64bit\` (Windows) or `~/Library/Application Support/obs-studio/plugins/ojowacam-obs\` (macOS) |
 | Wrong OBS version | Ensure OBS Studio 30.1.2+ is installed |
-| Missing dependencies | Verify `libobs` and streaming-core libraries are present |
-| module.json missing | Ensure `module.json` is next to the plugin binary |
+| Missing dependencies | Install a compatible 64-bit OBS Studio release; the plugin is linked to OBS and includes the streaming-core code |
+| module.json missing | Ensure `data\module.json` is present in the plugin folder |
 
 ### No Video in OBS
 
@@ -168,8 +167,10 @@ After a successful CI run, download artifacts from the GitHub Actions release pa
 
 ## Windows 10 / 11 Compatibility
 
-The Ojowacam OBS plugin is built and tested on:
-- **Windows 10** (version 1903 and later, 64-bit)
-- **Windows 11** (all supported versions, 64-bit)
+The Ojowacam OBS plugin is built for 64-bit OBS Studio on Windows 10 and Windows 11.
 
-The CI pipeline uses `windows-latest` (Windows Server 2022), which is binary-compatible with Windows 10 and Windows 11. All DLLs produced will run on both operating systems without modification.
+The CI pipeline builds against the OBS 30.1.2 API using the Windows 2022 toolchain. The runner OS is only the build environment; it does not change the plugin's install location or OBS's supported Windows versions.
+
+## Current functionality
+
+The Windows module registers the Ojowacam video and microphone source entries. Live streaming is not complete yet: the mobile signaling sender, WebRTC transport, encoded-media decoders, and OBS frame/audio output paths still contain unimplemented placeholders. A successful build or installation does not mean that live video or audio reception is available.

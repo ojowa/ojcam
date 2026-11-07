@@ -8,41 +8,49 @@
            UpgradeCode="a2c3e4f6-8b10-4d12-9a34-5c6e7f8091ab">
     <Package InstallerVersion="500"
              Compressed="yes"
-             InstallScope="perUser"
+             InstallScope="perMachine"
              Platform="x64" />
     <MajorUpgrade DowngradeErrorMessage="A newer Ojowacam OBS Plugin is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="AppDataFolder">
+      <Directory Id="CommonAppDataFolder">
         <Directory Id="OBSFolder" Name="obs-studio">
           <Directory Id="OBSPluginsFolder" Name="plugins">
-            <Directory Id="PluginInstallFolder" Name="ojowacam-obs" />
+            <Directory Id="PluginInstallFolder" Name="ojowacam-obs">
+              <Directory Id="PluginBinFolder" Name="bin">
+                <Directory Id="PluginBin64Folder" Name="64bit" />
+              </Directory>
+              <Directory Id="PluginDataFolder" Name="data" />
+            </Directory>
           </Directory>
         </Directory>
       </Directory>
     </Directory>
 
-    <DirectoryRef Id="PluginInstallFolder">
-      <Component Id="ObsPluginFilesComponent" Guid="b3d4f5a7-9c21-4e31-8b45-6d7f8091a2bc">
+    <DirectoryRef Id="PluginBin64Folder">
+      <Component Id="ObsPluginDllComponent" Guid="b3d4f5a7-9c21-4e31-8b45-6d7f8091a2bc" Win64="yes">
         <File Id="OjowacamObsPluginDll"
-              Source="$(var.PluginDir)\ojowacam-obs.dll" />
+              Source="$(var.PluginDir)\bin\64bit\ojowacam-obs.dll"
+              KeyPath="yes" />
+        <RemoveFolder Id="RemovePluginBin64Folder" Directory="PluginBin64Folder" On="uninstall" />
+        <RemoveFolder Id="RemovePluginBinFolder" Directory="PluginBinFolder" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="PluginDataFolder">
+      <Component Id="ObsPluginDataComponent" Guid="c4e5f6a8-0d32-4f42-9c56-7e8f9012b3cd" Win64="yes">
         <File Id="OjowacamObsModuleJson"
-              Source="$(var.PluginDir)\module.json" />
+              Source="$(var.PluginDir)\data\module.json"
+              KeyPath="yes" />
+        <RemoveFolder Id="RemovePluginDataFolder" Directory="PluginDataFolder" On="uninstall" />
         <RemoveFolder Id="RemovePluginInstallFolder" Directory="PluginInstallFolder" On="uninstall" />
-        <RemoveFolder Id="RemoveObsPluginsFolder" Directory="OBSPluginsFolder" On="uninstall" />
-        <RemoveFolder Id="RemoveObsFolder" Directory="OBSFolder" On="uninstall" />
-        <RegistryValue Root="HKCU"
-                       Key="Software\Ojowacam\ObsPlugin"
-                       Name="installed"
-                       Type="integer"
-                       Value="1"
-                       KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <Feature Id="ObsPluginFeature" Title="Ojowacam OBS Plugin" Level="1">
-      <ComponentRef Id="ObsPluginFilesComponent" />
+      <ComponentRef Id="ObsPluginDllComponent" />
+      <ComponentRef Id="ObsPluginDataComponent" />
     </Feature>
   </Product>
 </Wix>

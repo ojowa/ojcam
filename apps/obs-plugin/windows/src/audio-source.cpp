@@ -7,26 +7,24 @@ struct OjowacamAudioData {
     ojowacam::StreamReceiver* stream_receiver = nullptr;
 };
 
-// Source info
-obs_source_info ojowacam_audio_source_info = {
-    .id = "ojowacam_audio_source",
-    .type = OBS_SOURCE_TYPE_INPUT,
-    .flags = OBS_SOURCE_AUDIO,
-    .get_name = [](void *) -> const char * {
-        return "Ojowacam Microphone";
-    },
-    .create = ojowacam_audio_create,
-    .destroy = [](void *data) {
+obs_source_info ojowacam_audio_source_info = [] {
+    obs_source_info info{};
+    info.id = "ojowacam_audio_source";
+    info.type = OBS_SOURCE_TYPE_INPUT;
+    info.output_flags = OBS_SOURCE_AUDIO;
+    info.get_name = [](void *) -> const char * { return "Ojowacam Microphone"; };
+    info.create = ojowacam_audio_create;
+    info.destroy = [](void *data) {
         auto *d = static_cast<OjowacamAudioData *>(data);
         if (d->stream_receiver) {
             d->stream_receiver->disconnect();
             delete d->stream_receiver;
         }
         delete d;
-    },
-    .tick = ojowacam_audio_tick,
-    .get_properties = ojowacam_audio_properties,
-};
+    };
+    info.get_properties = ojowacam_audio_properties;
+    return info;
+}();
 
 void *ojowacam_audio_create(obs_data_t *settings, obs_source_t *source)
 {
@@ -37,21 +35,12 @@ void *ojowacam_audio_create(obs_data_t *settings, obs_source_t *source)
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
     
-    if (device_id && signaling_url) {
+    if (device_id && *device_id && signaling_url && *signaling_url) {
         data->stream_receiver = new ojowacam::StreamReceiver(nullptr, source);
         data->stream_receiver->connect(device_id, signaling_url);
     }
 
     return data;
-}
-
-void ojowacam_audio_tick(void *data, float seconds)
-{
-    auto *d = static_cast<OjowacamAudioData *>(data);
-    UNUSED_PARAMETER(seconds);
-
-    // Audio is pushed via StreamReceiver callback to obs_source_output_audio
-    UNUSED_PARAMETER(d);
 }
 
 obs_properties_t *ojowacam_audio_properties(void *data)
@@ -65,12 +54,18 @@ obs_properties_t *ojowacam_audio_properties(void *data)
         auto *d = static_cast<OjowacamAudioData*>(data);
         if (d->stream_receiver) {
             d->stream_receiver->disconnect();
-            delete d->stream_receiver;
-            d->stream_receiver = nullptr;
         }
-        
-        // Read current settings and reconnect
-        // Note: settings access would need obs_source_get_settings here
+
+        obs_data_t *settings = obs_source_get_settings(d->source);
+        const char *device_id = obs_data_get_string(settings, "device_id");
+        const char *signaling_url = obs_data_get_string(settings, "signaling_url");
+        if (device_id && *device_id && signaling_url && *signaling_url) {
+            if (!d->stream_receiver) {
+                d->stream_receiver = new ojowacam::StreamReceiver(nullptr, d->source);
+            }
+            d->stream_receiver->connect(device_id, signaling_url);
+        }
+        obs_data_release(settings);
         return true;
     });
     obs_properties_add_int(props, "sample_rate", "Sample Rate", 8000, 192000, 1);

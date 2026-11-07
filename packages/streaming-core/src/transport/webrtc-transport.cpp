@@ -11,12 +11,8 @@ WebRTCTransport::WebRTCTransport() : impl_(new Impl()) {}
 WebRTCTransport::~WebRTCTransport() { delete impl_; }
 
 bool WebRTCTransport::connect(const std::string& url) {
-    impl_->url = url;
-    // TODO: Initialize WebRTC peer connection
-    impl_->connected = true;
-    connected_ = true;
-    if (onConnectionStateChanged) onConnectionStateChanged(true);
-    return true;
+    (void)url;
+    return false;
 }
 
 void WebRTCTransport::disconnect() {
@@ -26,15 +22,13 @@ void WebRTCTransport::disconnect() {
 }
 
 bool WebRTCTransport::sendVideoFrame(const VideoFrame& frame) {
-    if (!impl_->connected) return false;
-    // TODO: Send via WebRTC video track
-    return true;
+    (void)frame;
+    return false;
 }
 
 bool WebRTCTransport::sendAudioFrame(const AudioFrame& frame) {
-    if (!impl_->connected) return false;
-    // TODO: Send via WebRTC audio track
-    return true;
+    (void)frame;
+    return false;
 }
 
 bool WebRTCTransport::isConnected() const {
@@ -42,15 +36,15 @@ bool WebRTCTransport::isConnected() const {
 }
 
 void WebRTCTransport::createOffer() {
-    // TODO: Create WebRTC offer
 }
 
 void WebRTCTransport::setRemoteDescription(const std::string& type, const std::string& sdp) {
-    // TODO: Set remote SDP
+    (void)type;
+    (void)sdp;
 }
 
 void WebRTCTransport::addIceCandidate(const std::string& candidate) {
-    // TODO: Add ICE candidate
+    (void)candidate;
 }
 
 } // namespace ojowacam

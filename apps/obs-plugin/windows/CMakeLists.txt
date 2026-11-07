@@ -4,7 +4,7 @@ project(ojowacam-obs-windows-plugin VERSION 1.0.0)
 # ------------------------------------------------------------------
 # Windows OBS Plugin (Windows 10 / 11)
 # Output: ojowacam-obs.dll
-# Install location: %APPDATA%\obs-studio\plugins\ojowacam-obs\
+# Install location: %PROGRAMDATA%\obs-studio\plugins\ojowacam-obs\
 # ------------------------------------------------------------------
 
 include_directories(
@@ -37,8 +37,16 @@ target_link_libraries(ojowacam-obs PRIVATE ${OBS_LIBRARIES} streaming-core)
 set_target_properties(ojowacam-obs PROPERTIES
     PREFIX ""
     SUFFIX ".dll"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/package/bin/64bit"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/package/bin/64bit"
 )
+
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(ojowacam-obs PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/package/bin/64bit"
+        LIBRARY_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/package/bin/64bit"
+    )
+endforeach()
 
 # Link WebRTC if available
 find_package(WebRTC QUIET)
@@ -47,7 +55,8 @@ if(WebRTC_FOUND)
     target_compile_definitions(ojowacam-obs PRIVATE OJO_WEBRTC_ENABLED)
 endif()
 
-# Copy Windows module.json next to the plugin binary
+# OBS's modern Windows plugin layout separates binaries and data.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/package/data")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/data/module.json
-               ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs/module.json
+               ${CMAKE_BINARY_DIR}/package/data/module.json
                COPYONLY)

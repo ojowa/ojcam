@@ -18,4 +18,12 @@ public:
     virtual bool isInitialized() const = 0;
 };
 
+class OpusAudioDecoder final : public AudioDecoder {
+public:
+    bool initialize(int sample_rate, int channels, const std::string& codec) override;
+    bool decode(const std::vector<uint8_t>& encoded_data, int64_t timestamp_us) override;
+    void release() override;
+    bool isInitialized() const override;
+};
+
 } // namespace ojowacam

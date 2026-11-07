@@ -1,4 +1,5 @@
 #include "stream-receiver.h"
+#include <transport/webrtc-transport.h>
 
 namespace ojowacam {
 
@@ -59,6 +60,7 @@ bool StreamReceiver::connect(const std::string& device_id, const std::string& si
     impl_->signaling_url = signaling_url;
     
     if (!impl_->transport->connect(signaling_url)) {
+        blog(LOG_ERROR, "[Ojowacam] WebRTC transport is not implemented; unable to connect.");
         return false;
     }
     

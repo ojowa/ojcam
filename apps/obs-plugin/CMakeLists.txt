@@ -79,7 +79,12 @@ message(STATUS "OBS_LIBRARIES: ${OBS_LIBRARIES}")
 include_directories(
     shared/include
     ${OBS_INCLUDE_DIRS}
-    ../../../packages/streaming-core/include
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../packages/streaming-core/include"
+)
+
+add_subdirectory(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../packages/streaming-core"
+    "${CMAKE_CURRENT_BINARY_DIR}/streaming-core"
 )
 
 # Select platform subdirectory

@@ -33,7 +33,7 @@
 - OBS plugin MSI installer created with WiX
 - App tested on Windows 10 and Windows 11
 - ADB detected and reverse port forwarding works
-- OBS Studio integration verified (27.0+)
+- OBS Studio plugin loading verified with OBS Studio 30.1.2+
 
 ### macOS Build
 - Release build with Swift
@@ -44,12 +44,13 @@
 - App notarized with Apple
 
 ### OBS Plugin
-- Windows plugin built with Media Foundation
+- Windows plugin module built against the OBS 30.1.2 API
 - macOS plugin built with CoreMediaIO
-- Plugin tested with OBS Studio 27.0+
+- Plugin tested with OBS Studio 30.1.2+
 - Video source appears in OBS source list
 - Audio source appears in OBS audio sources
 - Source properties dialog works
+- End-to-end signaling, video decoding/rendering, and audio playback implemented and verified before claiming live streaming support
 
 ### Security
 - All media transport encrypted (DTLS-SRTP)

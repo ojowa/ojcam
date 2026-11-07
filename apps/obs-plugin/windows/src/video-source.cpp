@@ -11,23 +11,21 @@ struct OjowacamVideoData {
     gs_texture_t* current_texture = nullptr;
 };
 
-// Source info
-obs_source_info ojowacam_video_source_info = {
-    .id = "ojowacam_video_source",
-    .type = OBS_SOURCE_TYPE_INPUT,
-    .flags = OBS_SOURCE_ASYNC_VIDEO,
-    .get_name = [](void *) -> const char * {
-        return "Ojowacam Video";
-    },
-    .create = ojowacam_video_create,
-    .destroy = ojowacam_video_destroy,
-    .render = ojowacam_video_render,
-    .get_width = ojowacam_video_width,
-    .get_height = ojowacam_video_height,
-    .get_default_size = ojowacam_video_get_default_size,
-    .update = ojowacam_video_update,
-    .get_properties = ojowacam_video_properties,
-};
+obs_source_info ojowacam_video_source_info = [] {
+    obs_source_info info{};
+    info.id = "ojowacam_video_source";
+    info.type = OBS_SOURCE_TYPE_INPUT;
+    info.output_flags = OBS_SOURCE_VIDEO;
+    info.get_name = [](void *) -> const char * { return "Ojowacam Video"; };
+    info.create = ojowacam_video_create;
+    info.destroy = ojowacam_video_destroy;
+    info.get_width = ojowacam_video_width;
+    info.get_height = ojowacam_video_height;
+    info.video_render = ojowacam_video_render;
+    info.update = ojowacam_video_update;
+    info.get_properties = ojowacam_video_properties;
+    return info;
+}();
 
 void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
 {
@@ -41,7 +39,7 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
     
-    if (device_id && signaling_url) {
+    if (device_id && *device_id && signaling_url && *signaling_url) {
         data->stream_receiver = new ojowacam::StreamReceiver(source, nullptr);
         data->stream_receiver->connect(device_id, signaling_url);
     }
@@ -65,13 +63,13 @@ void ojowacam_video_destroy(void *data)
 void ojowacam_video_render(void *data, gs_effect_t *effect)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
-    UNUSED_PARAMETER(effect);
 
     if (!d->current_texture) return;
 
-    // Draw the texture to OBS
-    gs_effect_set_texture(effect, "image", d->current_texture);
-    gs_effect_set_next_sampler(effect, gs_stagesize(0));
+    gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
+    if (!image) return;
+
+    gs_effect_set_texture(image, d->current_texture);
     gs_draw_sprite(d->current_texture, 0, d->width, d->height);
 }
 
@@ -87,22 +85,18 @@ uint32_t ojowacam_video_height(void *data)
     return d->height;
 }
 
-bool ojowacam_video_get_default_size(obs_data_t *settings, uint32_t *cx, uint32_t *cy)
-{
-    UNUSED_PARAMETER(settings);
-    *cx = 1920;
-    *cy = 1080;
-    return true;
-}
-
 void ojowacam_video_update(void *data, obs_data_t *settings)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
     
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
+
+    if (d->stream_receiver) {
+        d->stream_receiver->disconnect();
+    }
     
-    if (device_id && signaling_url) {
+    if (device_id && *device_id && signaling_url && *signaling_url) {
         if (!d->stream_receiver) {
             d->stream_receiver = new ojowacam::StreamReceiver(d->source, nullptr);
         }
@@ -119,8 +113,9 @@ obs_properties_t *ojowacam_video_properties(void *data)
     obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://)", OBS_TEXT_DEFAULT);
     obs_properties_add_button(props, "connect", "Connect to Device", [](obs_properties_t*, obs_property_t*, void* data) {
         auto *d = static_cast<OjowacamVideoData*>(data);
-        // Reconnect with current settings
-        ojowacam_video_update(d, obs_source_get_settings(d->source));
+        obs_data_t *settings = obs_source_get_settings(d->source);
+        ojowacam_video_update(d, settings);
+        obs_data_release(settings);
         return true;
     });
     obs_properties_add_int(props, "resolution_width", "Width", 1, 7680, 1);

@@ -3,6 +3,8 @@
 #include "audio-source.h"
 #include "device-manager.h"
 
+OBS_DECLARE_MODULE()
+
 // Module information
 const char *obs_module_name(void)
 {
