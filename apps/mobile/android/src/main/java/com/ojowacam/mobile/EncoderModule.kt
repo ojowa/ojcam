@@ -55,13 +55,11 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             if (outputBuffer != null) {
                                 val encodedData = ByteArray(bufferInfo.size)
                                 outputBuffer.get(encodedData)
-                                // Strip start code if present (0x00000001 or 0x000001)
                                 val nalData = stripStartCode(encodedData)
                                 onEncodedFrame?.invoke(nalData)
                                 mediaCodec!!.releaseOutputBuffer(outputBufferId, false)
                             }
                         }
-                        outputBufferId == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Log.d(TAG, "Output buffers changed")
                         outputBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             val newFormat = mediaCodec!!.outputFormat
                             Log.d(TAG, "Output format changed: $newFormat")

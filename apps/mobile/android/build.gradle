@@ -1,28 +1,25 @@
-def minSdkVersion = 24
-def compileSdkVersion = 33
-def targetSdkVersion = 33
-
 buildscript {
+    ext.kotlin_version = '1.8.0'
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:7.4.2")
+        classpath "com.android.tools.build:gradle:7.4.2"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
 
 apply plugin: "com.android.application"
-
-def hasReleaseSigning = System.env.ANDROID_KEYSTORE_PASSWORD != null
+apply plugin: "org.jetbrains.kotlin.android"
 
 android {
-    compileSdkVersion compileSdkVersion
+    compileSdkVersion 33
 
     defaultConfig {
         applicationId "com.ojowacam.mobile"
-        minSdkVersion minSdkVersion
-        targetSdkVersion targetSdkVersion
+        minSdkVersion 24
+        targetSdkVersion 33
         versionCode 1
         versionName "1.0.0"
     }
@@ -35,7 +32,7 @@ android {
             keyAlias "androiddebugkey"
             keyPassword "android"
         }
-        if (hasReleaseSigning) {
+        if (System.env.ANDROID_KEYSTORE_PASSWORD != null) {
             release {
                 storeFile file(System.env.ANDROID_KEYSTORE_PATH ?: "ojowacam-upload-keystore.jks")
                 storePassword System.env.ANDROID_KEYSTORE_PASSWORD
@@ -51,7 +48,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
-            if (hasReleaseSigning) {
+            if (System.env.ANDROID_KEYSTORE_PASSWORD != null) {
                 signingConfig signingConfigs.release
             }
         }
@@ -73,6 +70,5 @@ repositories {
 }
 
 dependencies {
-    // React Native and WebRTC dependencies are managed through Expo SDK,
-    // not as direct Gradle dependencies in this native module directory
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
 }

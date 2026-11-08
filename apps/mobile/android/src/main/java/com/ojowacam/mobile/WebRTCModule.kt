@@ -231,6 +231,34 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         }
     }
 
+    @ReactMethod
+    fun addVideoTrack(trackId: String, promise: Promise) {
+        try {
+            val factory = peerConnectionFactory ?: throw Exception("WebRTC not initialized")
+            videoSource = factory.createVideoSource(false)
+            videoTrack = factory.createVideoTrack(trackId, videoSource!!)
+            val pc = peerConnection ?: throw Exception("No peer connection")
+            pc.addTrack(videoTrack!!, listOf("ojowacam-video"))
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ADD_VIDEO_TRACK_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun addAudioTrack(trackId: String, promise: Promise) {
+        try {
+            val factory = peerConnectionFactory ?: throw Exception("WebRTC not initialized")
+            audioSource = factory.createAudioSource(MediaConstraints())
+            audioTrack = factory.createAudioTrack(trackId, audioSource!!)
+            val pc = peerConnection ?: throw Exception("No peer connection")
+            pc.addTrack(audioTrack!!, listOf("ojowacam-audio"))
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ADD_AUDIO_TRACK_ERROR", e.message, e)
+        }
+    }
+
     fun getPeerConnection(): PeerConnection? = peerConnection
     fun getVideoTrack(): VideoTrack? = videoTrack
     fun getAudioTrack(): AudioTrack? = audioTrack

@@ -274,11 +274,9 @@ jobs:
               <key>method</key>
               <string>ad-hoc</string>
               <key>signingStyle</key>
-              <string>manual</string>
+              <string>automatic</string>
               <key>stripSwiftSymbols</key>
               <true/>
-              <key>teamID</key>
-              <string>${{ secrets.APPLE_TEAM_ID }}</string>
               <key>thinning</key>
               <string>&lt;thin-for-all-variants&gt;</string>
           </dict>
@@ -287,7 +285,7 @@ jobs:
       - name: Build iOS app (archive)
         run: |
           cd apps/mobile/ios
-          xcodebuild -workspace Ojowacam.xcworkspace -scheme Ojowacam -configuration Release -sdk iphoneos -archivePath build/Ojowacam.xcarchive archive
+          xcodebuild -project Ojowacam.xcodeproj -scheme Ojowacam -configuration Release -sdk iphoneos -archivePath build/Ojowacam.xcarchive archive
       - name: Export iOS IPA
         run: |
           cd apps/mobile/ios
@@ -699,3 +697,5 @@ jobs:
             artifacts/ojowacam-obs-macos/**
           fail-on-error: false
           generate_release_notes: true
+
+

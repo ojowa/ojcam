@@ -387,6 +387,16 @@
 					<string>5.0</string>
 					<key>TARGETED_DEVICE_FAMILY</key>
 					<string>1,2</string>
+				<key>EXCLUDED_ARCHS</key>
+				<string>arm64</string>
+				<key>INFOPLIST_FILE</key>
+				<string>Ojowacam/Info.plist</string>
+				<key>LD_RUNPATH_SEARCH_PATHS</key>
+				<string>$(inherited) @executable_path/Frameworks</string>
+				<key>PRODUCT_NAME</key>
+				<string>Ojowacam</string>
+				<key>EXECUTABLE_NAME</key>
+				<string>Ojowacam</string>
 				</dict>
 				<key>name</key>
 				<string>Debug</string>
@@ -415,6 +425,16 @@
 					<string>5.0</string>
 					<key>TARGETED_DEVICE_FAMILY</key>
 					<string>1,2</string>
+				<key>EXCLUDED_ARCHS</key>
+				<string>arm64</string>
+				<key>INFOPLIST_FILE</key>
+				<string>Ojowacam/Info.plist</string>
+				<key>LD_RUNPATH_SEARCH_PATHS</key>
+				<string>$(inherited) @executable_path/Frameworks</string>
+				<key>PRODUCT_NAME</key>
+				<string>Ojowacam</string>
+				<key>EXECUTABLE_NAME</key>
+				<string>Ojowacam</string>
 				</dict>
 				<key>name</key>
 				<string>Release</string>
@@ -440,4 +460,7 @@
 	<string>ROOT_PROJECT</string>
 </dict>
 </plist>
+
+
+
 
