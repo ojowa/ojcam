@@ -1,6 +1,7 @@
 package com.ojowacam.mobile
 
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
 import com.facebook.react.bridge.ReactApplicationContext
@@ -10,12 +11,15 @@ import com.facebook.react.bridge.Promise
 import java.nio.ByteBuffer
 
 class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+
     private val TAG = "OjowacamEncoder"
     private var mediaCodec: MediaCodec? = null
     private var isEncoding = false
     private var encodeThread: Thread? = null
+    private var width = 0
+    private var height = 0
 
-    // Callback for encoded H264 NAL units
+    // Callback for encoded H264 NAL units -> WebRTC video track
     var onEncodedFrame: ((ByteArray) -> Unit)? = null
 
     override fun getName(): String = "OjowacamEncoder"
@@ -23,12 +27,16 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     @ReactMethod
     fun initEncoder(width: Int, height: Int, bitrate: Int, fps: Int, promise: Promise) {
         try {
+            releaseEncoderInternal()
+            this.width = width
+            this.height = height
+
             val format = MediaFormat.createVideoFormat("video/avc", width, height)
-            format.setInteger(MediaFormat.KEY_COLOR_FORMAT, 0x7FA30C01) // COLOR_FormatSurface
+            format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
             format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             format.setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
-            format.setInteger(MediaFormat.KEY_LEVEL, 51) // Level 5.1 for 4K
+            format.setInteger(MediaFormat.KEY_LEVEL, 51)
             format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
 
             mediaCodec = MediaCodec.createEncoderByType("video/avc")
@@ -41,14 +49,24 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val bufferInfo = MediaCodec.BufferInfo()
                 while (isEncoding) {
                     val outputBufferId = mediaCodec!!.dequeueOutputBuffer(bufferInfo, 10000)
-                    if (outputBufferId >= 0) {
-                        val outputBuffer = mediaCodec!!.getOutputBuffer(outputBufferId)
-                        if (outputBuffer != null) {
-                            val encodedData = ByteArray(bufferInfo.size)
-                            outputBuffer.get(encodedData)
-                            onEncodedFrame?.invoke(encodedData)
-                            mediaCodec!!.releaseOutputBuffer(outputBufferId, false)
+                    when {
+                        outputBufferId >= 0 -> {
+                            val outputBuffer = mediaCodec!!.getOutputBuffer(outputBufferId)
+                            if (outputBuffer != null) {
+                                val encodedData = ByteArray(bufferInfo.size)
+                                outputBuffer.get(encodedData)
+                                // Strip start code if present (0x00000001 or 0x000001)
+                                val nalData = stripStartCode(encodedData)
+                                onEncodedFrame?.invoke(nalData)
+                                mediaCodec!!.releaseOutputBuffer(outputBufferId, false)
+                            }
                         }
+                        outputBufferId == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Log.d(TAG, "Output buffers changed")
+                        outputBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            val newFormat = mediaCodec!!.outputFormat
+                            Log.d(TAG, "Output format changed: $newFormat")
+                        }
+                        outputBufferId == MediaCodec.INFO_TRY_AGAIN_LATER -> Log.d(TAG, "No output buffer available")
                     }
                 }
             }
@@ -61,27 +79,66 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
     }
 
+    /**
+     * Encode a YUV_420_888 frame from CameraModule.
+     * The input is planar YUV data: Y plane followed by U and V planes.
+     */
+    fun encodeFrame(yuvData: ByteArray) {
+        if (!isEncoding || mediaCodec == null) return
+
+        try {
+            val inputBufferId = mediaCodec!!.dequeueInputBuffer(5000)
+            if (inputBufferId >= 0) {
+                val inputBuffer = mediaCodec!!.getInputBuffer(inputBufferId)
+                if (inputBuffer != null) {
+                    inputBuffer.clear()
+                    inputBuffer.put(yuvData)
+                    mediaCodec!!.queueInputBuffer(
+                        inputBufferId,
+                        0,
+                        yuvData.size,
+                        System.nanoTime() / 1000,
+                        0
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to queue input frame", e)
+        }
+    }
+
     @ReactMethod
     fun releaseEncoder(promise: Promise) {
         try {
-            isEncoding = false
-            encodeThread?.interrupt()
-            encodeThread = null
-            mediaCodec?.stop()
-            mediaCodec?.release()
-            mediaCodec = null
+            releaseEncoderInternal()
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("RELEASE_ENCODER_ERROR", e.message, e)
         }
     }
 
-    fun queueInputFrame(surface: android.view.Surface, presentationTimeUs: Long) {
-        // TODO: Bind Surface to Camera2 output, queue frame for encoding
+    private fun releaseEncoderInternal() {
+        isEncoding = false
+        encodeThread?.interrupt()
+        encodeThread = null
+        mediaCodec?.stop()
+        mediaCodec?.release()
+        mediaCodec = null
+    }
+
+    private fun stripStartCode(data: ByteArray): ByteArray {
+        var start = 0
+        if (data.size >= 4 && data[0] == 0.toByte() && data[1] == 0.toByte() && data[2] == 0.toByte() && data[3] == 1.toByte()) {
+            start = 4
+        } else if (data.size >= 3 && data[0] == 0.toByte() && data[1] == 0.toByte() && data[2] == 1.toByte()) {
+            start = 3
+        }
+        return if (start > 0) data.copyOfRange(start, data.size) else data
     }
 
     override fun onDestroy() {
-        releaseEncoder(com.facebook.react.bridge.Promise() { _, _ -> })
+        releaseEncoderInternal()
         super.onDestroy()
     }
+
 }

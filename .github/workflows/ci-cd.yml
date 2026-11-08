@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+﻿name: CI/CD Pipeline
 
 on:
   push:
@@ -14,7 +14,7 @@ env:
 jobs:
   android-build:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -41,12 +41,9 @@ jobs:
         run: |
           echo "Android native modules exist at apps/mobile/android/"
           ls apps/mobile/android/src/main/java/com/ojowacam/mobile/
-          echo "Building Android APK with Gradle 7.5..."
+          echo "Building Android APK with Gradle 8.0..."
           sudo apt-get update && sudo apt-get install -y unzip zip
-          curl -fsSL -o /tmp/gradle-7.5-bin.zip "https://services.gradle.org/distributions/gradle-7.5-bin.zip"
-          sudo unzip -q /tmp/gradle-7.5-bin.zip -d /opt/
-          export PATH="/opt/gradle-7.5/bin:$PATH"
-          cd apps/mobile/android && gradle assembleDebug
+          cd apps/mobile/android && ./gradlew assembleDebug
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
@@ -83,7 +80,7 @@ jobs:
     # Runs the mobile app from CI build artifacts on a headless Android emulator
     # to verify the APK produced by CI installs, launches, and runs.
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -132,7 +129,7 @@ jobs:
           exit 1
       - name: Install mobile app from CI artifact
         run: |
-          adb install -r -g mobile-artifact/app-debug.apk
+          adb install -r -g mobile-artifact/com.ojowacam.mobile-debug.apk
       - name: Launch mobile app
         run: |
           adb shell am start -n com.ojowacam.mobile/com.ojowacam.mobile.MainActivity \
@@ -165,7 +162,7 @@ jobs:
   windows-build:
     # Windows Server 2022 (windows-latest) is binary-compatible with Windows 10 and Windows 11.
     runs-on: windows-latest
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -220,7 +217,7 @@ jobs:
 
   macos-build:
     runs-on: macos-latest
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -242,9 +239,69 @@ jobs:
           name: ojowacam-macos-build
           path: apps/desktop-macos/.build/release/
 
+  ios-build:
+    runs-on: macos-latest
+    continue-on-error: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.0'
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install mobile dependencies
+        run: |
+          cd apps/mobile && npm install
+      - name: Install CocoaPods
+        run: |
+          gem install cocoapods
+      - name: Install iOS pods
+        run: |
+          cd apps/mobile/ios && pod install
+      - name: Create iOS export options plist
+        run: |
+          cat > apps/mobile/ios/ExportOptions.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>compileBitcode</key>
+              <false/>
+              <key>method</key>
+              <string>ad-hoc</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>stripSwiftSymbols</key>
+              <true/>
+              <key>teamID</key>
+              <string>${{ secrets.APPLE_TEAM_ID }}</string>
+              <key>thinning</key>
+              <string>&lt;thin-for-all-variants&gt;</string>
+          </dict>
+          </plist>
+          EOF
+      - name: Build iOS app (archive)
+        run: |
+          cd apps/mobile/ios
+          xcodebuild -workspace Ojowacam.xcworkspace -scheme Ojowacam -configuration Release -sdk iphoneos -archivePath build/Ojowacam.xcarchive archive
+      - name: Export iOS IPA
+        run: |
+          cd apps/mobile/ios
+          xcodebuild -exportArchive -archivePath build/Ojowacam.xcarchive -exportPath build/ipa -exportOptionsPlist ExportOptions.plist
+      - name: Upload iOS IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-ios-ipa
+          path: apps/mobile/ios/build/ipa/*.ipa
+          if-no-files-found: continue
+
   cpp-build:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -615,7 +672,7 @@ jobs:
         run: npm audit --audit-level=high || true
 
   release:
-    needs: [android-build, windows-build, macos-build, cpp-build, obs-plugin-build, security-scan]
+    needs: [android-build, windows-build, macos-build, cpp-build, obs-plugin-build, security-scan, ios-build]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     steps:
@@ -632,6 +689,7 @@ jobs:
             artifacts/ojowacam-android-apk/*.apk
             artifacts/ojowacam-android-apk-release/*.apk
             artifacts/ojowacam-android-aab/*.aab
+            artifacts/ojowacam-ios-ipa/*.ipa
             artifacts/ojowacam-windows-build/**
             artifacts/ojowacam-windows-publish/**
             artifacts/ojowacam-windows-msi/**

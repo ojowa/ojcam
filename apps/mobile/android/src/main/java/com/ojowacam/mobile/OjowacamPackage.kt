@@ -5,6 +5,7 @@ import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
 import com.facebook.react.bridge.JavaScriptModule
+import com.ojowacam.mobile.usb.USBModule
 import java.util.Collections
 import java.util.List
 
@@ -14,7 +15,8 @@ class OjowacamPackage : ReactPackage {
             CameraModule(reactContext),
             AudioModule(reactContext),
             EncoderModule(reactContext),
-            WebRTCModule(reactContext)
+            WebRTCModule(reactContext),
+            USBModule(reactContext)
         )
     }
 
