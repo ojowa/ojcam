@@ -1,15 +1,15 @@
 cmake_minimum_required(VERSION 3.10)
-project(ojowacam-obs-plugin VERSION 1.0.0)
+project(ojowacam-obs-macos-plugin VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ------------------------------------------------------------------
-# Top-level OBS Plugin CMake
-# Dispatches to platform-specific subdirectory
+# OBS Plugin CMake for macOS
+# Output: ojowacam-obs.bundle
 # ------------------------------------------------------------------
 
-# Locate OBS Studio (shared logic for all platforms)
+# Locate OBS Studio
 set(OBS_FOUND FALSE)
 
 set(_OBS_CONFIG_PATHS
@@ -38,25 +38,11 @@ if(NOT OBS_FOUND)
         NO_DEFAULT_PATH
     )
 
-    if(WIN32)
-        find_library(OBS_LIB
-            NAMES obs.lib obs
-            PATHS "${CMAKE_PREFIX_PATH}/lib" "${CMAKE_PREFIX_PATH}/bin"
-            NO_DEFAULT_PATH
-        )
-    elseif(APPLE)
-        find_library(OBS_LIB
-            NAMES obs
-            PATHS "${CMAKE_PREFIX_PATH}/lib"
-            NO_DEFAULT_PATH
-        )
-    else()
-        find_library(OBS_LIB
-            NAMES obs
-            PATHS "${CMAKE_PREFIX_PATH}/lib" "${CMAKE_PREFIX_PATH}/lib64"
-            NO_DEFAULT_PATH
-        )
-    endif()
+    find_library(OBS_LIB
+        NAMES obs
+        PATHS "${CMAKE_PREFIX_PATH}/lib"
+        NO_DEFAULT_PATH
+    )
 
     if(NOT OBS_INCLUDE_DIR OR NOT OBS_LIB)
         message(FATAL_ERROR
@@ -75,23 +61,58 @@ endif()
 message(STATUS "OBS_INCLUDE_DIRS: ${OBS_INCLUDE_DIRS}")
 message(STATUS "OBS_LIBRARIES: ${OBS_LIBRARIES}")
 
-# Include directories for shared code + OBS + streaming-core
+# Include directories
 include_directories(
+    include
     shared/include
+    streaming-core/include
     ${OBS_INCLUDE_DIRS}
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../packages/streaming-core/include"
 )
 
-add_subdirectory(
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../packages/streaming-core"
-    "${CMAKE_CURRENT_BINARY_DIR}/streaming-core"
+# Add streaming-core library
+add_subdirectory(streaming-core)
+
+# macOS-specific source files (Objective-C++)
+set(MACOS_SOURCES
+    src/plugin.mm
+    src/camera-source.mm
+    src/audio-source.mm
+    src/device-manager.mm
+    src/stream-receiver.mm
+    shared/src/device-manager.cpp
+    shared/src/stream-receiver.cpp
+    shared/src/frame-converter.cpp
 )
 
-# Select platform subdirectory
-if(WIN32)
-    add_subdirectory(windows)
-elseif(APPLE)
-    add_subdirectory(macos)
-else()
-    message(FATAL_ERROR "Unsupported platform for OBS plugin")
+add_library(ojowacam-obs-macos MODULE ${MACOS_SOURCES})
+
+target_link_libraries(ojowacam-obs-macos PRIVATE ${OBS_LIBRARIES} streaming-core
+    CoreFoundation
+    CoreMediaIO
+    CoreMedia
+    CoreVideo
+    CoreAudio
+    AVFoundation
+    Cocoa
+)
+
+# macOS bundle properties
+set_target_properties(ojowacam-obs-macos PROPERTIES
+    PREFIX ""
+    SUFFIX ".bundle"
+    MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/data/Info.plist
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs
+)
+
+# Link WebRTC if available
+find_package(WebRTC QUIET)
+if(WebRTC_FOUND)
+    target_link_libraries(ojowacam-obs-macos PRIVATE WebRTC::WebRTC)
+    target_compile_definitions(ojowacam-obs-macos PRIVATE OJO_WEBRTC_ENABLED)
 endif()
+
+# Copy module.json next to the plugin binary
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/data/module.json
+               ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs/module.json
+               COPYONLY)

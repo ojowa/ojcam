@@ -27,7 +27,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential ninja-build qt6-base ffmpeg libuv1-dev python3
+          sudo apt-get install -y cmake build-essential ninja-build qt6-base ffmpeg libuv1-dev python3 libavahi-client-dev
 
       - name: Clone OBS Studio SDK
         run: |
@@ -62,8 +62,7 @@ jobs:
 
       - name: Configure Ojowacam OBS Plugin (Linux)
         run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          cmake -S apps/obs-plugin -B apps/obs-plugin/build -G "Unix Makefiles" \
+          cmake -S apps/obs-plugin-linux -B apps/obs-plugin-linux/build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX"
           if [ $? -ne 0 ]; then exit 1; fi
@@ -71,7 +70,7 @@ jobs:
 
       - name: Build Ojowacam OBS Plugin (Linux)
         run: |
-          cmake --build apps/obs-plugin/build -j $(nproc)
+          cmake --build apps/obs-plugin-linux/build -j $(nproc)
           if [ $? -ne 0 ]; then exit 1; fi
           echo "Ojowacam plugin build complete"
 
@@ -80,4 +79,4 @@ jobs:
         with:
           name: ojowacam-obs-linux
           path: |
-            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.so*
+            apps/obs-plugin-linux/build/data/obs-plugins/ojowacam-obs/**/*.so*

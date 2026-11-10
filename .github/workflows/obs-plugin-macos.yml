@@ -85,8 +85,8 @@ jobs:
 
       - name: Configure Ojowacam OBS Plugin (macOS)
         run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          cmake -S apps/obs-plugin -B apps/obs-plugin/build -G "Unix Makefiles" \
+          export CMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/obs-install"
+          cmake -S apps/obs-plugin-macos -B apps/obs-plugin-macos/build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX"
           if [ $? -ne 0 ]; then exit 1; fi
@@ -94,7 +94,7 @@ jobs:
 
       - name: Build Ojowacam OBS Plugin (macOS)
         run: |
-          cmake --build apps/obs-plugin/build -j $(sysctl -n hw.ncpu)
+          cmake --build apps/obs-plugin-macos/build -j $(sysctl -n hw.ncpu)
           if [ $? -ne 0 ]; then exit 1; fi
           echo "Ojowacam plugin build complete"
 
@@ -106,7 +106,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
         run: |
-          BUNDLE_PATH=$(find apps/obs-plugin/build/data/obs-plugins/ojowacam-obs -name "*.bundle" -type d | head -1)
+          BUNDLE_PATH=$(find apps/obs-plugin-macos/build/data/obs-plugins/ojowacam-obs -name "*.bundle" -type d | head -1)
           if [ -n "$BUNDLE_PATH" ]; then
             codesign --deep --force --sign "$APPLE_DEVELOPER_ID" "$BUNDLE_PATH"
             echo "macOS OBS plugin signed"
@@ -129,5 +129,5 @@ jobs:
         with:
           name: ojowacam-obs-macos
           path: |
-            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.bundle
-            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.dylib
+            apps/obs-plugin-macos/build/data/obs-plugins/ojowacam-obs/**/*.bundle
+            apps/obs-plugin-macos/build/data/obs-plugins/ojowacam-obs/**/*.dylib

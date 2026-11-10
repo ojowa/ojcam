@@ -150,17 +150,15 @@ jobs:
       - name: Configure Ojowacam OBS Plugin (Windows)
         shell: pwsh
         run: |
-          $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
-          cmake -S apps/obs-plugin -B apps/obs-plugin/build -G "Visual Studio 17 2022" -A x64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$env:OBS_INSTALL_PREFIX"
+          $env:CMAKE_PREFIX_PATH = "$env:GITHUB_WORKSPACE/obs-install"
+          cmake -S apps/obs-plugin-windows -B apps/obs-plugin-windows/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "Ojowacam plugin configure complete"
 
       - name: Build Ojowacam OBS Plugin (Windows)
         shell: pwsh
         run: |
-          cmake --build apps/obs-plugin/build --config Release --target ojowacam-obs -j 4
+          cmake --build apps/obs-plugin-windows/build --config Release --target ojowacam-obs -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "Ojowacam plugin build complete"
 
@@ -173,7 +171,7 @@ jobs:
         run: |
           $certPath = "$env:RUNNER_TEMP/ojowacam-signing-cert.pfx"
           [System.IO.File]::WriteAllBytes($certPath, [System.Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT))
-          $dllPath = Get-ChildItem -Path "apps/obs-plugin/build/package/bin/64bit" -Filter "ojowacam-obs.dll" -Recurse | Select-Object -First 1
+          $dllPath = Get-ChildItem -Path "apps/obs-plugin-windows/build/package/bin/64bit" -Filter "ojowacam-obs.dll" -Recurse | Select-Object -First 1
           if ($dllPath) {
             & signtool sign /f $certPath /p $env:WINDOWS_SIGNING_CERT_PASSWORD /t http://timestamp.digicert.com /v $dllPath.FullName
             Write-Host "Windows OBS plugin signed successfully"
@@ -184,7 +182,7 @@ jobs:
       - name: Build Ojowacam OBS Plugin MSI
         shell: pwsh
         run: |
-          $pluginOutput = Join-Path $env:GITHUB_WORKSPACE 'apps/obs-plugin/build/package'
+          $pluginOutput = Join-Path $env:GITHUB_WORKSPACE 'apps/obs-plugin-windows/build/package'
           $pluginDll = Join-Path $pluginOutput 'bin/64bit/ojowacam-obs.dll'
           $moduleJson = Join-Path $pluginOutput 'data/module.json'
           if (-not (Test-Path $pluginDll)) { throw 'OBS plugin DLL was not built.' }
@@ -194,13 +192,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $pluginStage 'data') | Out-Null
           Copy-Item -LiteralPath $pluginDll -Destination (Join-Path $pluginStage 'bin/64bit/ojowacam-obs.dll')
           Copy-Item -LiteralPath $moduleJson -Destination (Join-Path $pluginStage 'data/module.json')
-          candle.exe "-dPluginDir=$pluginStage" -out apps/obs-plugin/build/ojowacam-obs-plugin.wixobj infrastructure/installers/ojowacam-obs-plugin.wxs
+          candle.exe "-dPluginDir=$pluginStage" -out apps/obs-plugin-windows/build/ojowacam-obs-plugin.wixobj infrastructure/installers/ojowacam-obs-plugin.wxs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          light.exe -out apps/obs-plugin/build/Ojowacam.ObsPlugin.msi apps/obs-plugin/build/ojowacam-obs-plugin.wixobj
+          light.exe -out apps/obs-plugin-windows/build/Ojowacam.ObsPlugin.msi apps/obs-plugin-windows/build/ojowacam-obs-plugin.wixobj
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Ojowacam OBS Plugin MSI (Windows)
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-obs-windows
-          path: apps/obs-plugin/build/Ojowacam.ObsPlugin.msi
+          path: apps/obs-plugin-windows/build/Ojowacam.ObsPlugin.msi

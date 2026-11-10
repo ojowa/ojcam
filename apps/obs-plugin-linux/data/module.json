@@ -1,0 +1,13 @@
+{
+  "id": "ojowacam-obs-linux",
+  "name": "Ojowacam OBS Plugin",
+  "description": "Turn your smartphone into a webcam and microphone for OBS Studio",
+  "author": "Ojowacam Team",
+  "url": "https://github.com/ojowa/ojcam",
+  "platform": "linux",
+  "sources": [
+    "ojowacam_video_source",
+    "ojowacam_audio_source"
+  ],
+  "min_obs_version": "27.0.0"
+}
