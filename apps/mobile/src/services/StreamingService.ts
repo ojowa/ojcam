@@ -190,7 +190,7 @@ export class StreamingService {
       const audioConfig: AudioConfig = { codec: 'OPUS', sampleRate: 48000, channels: 2 };
       const sessionMsg = createStartSession(`${deviceIdentity.getDeviceId()}-${Date.now()}`, videoConfig, audioConfig);
       const sessionBase64 = encodeMessageBase64(sessionMsg as import('./protocol/messageTypes').StartSession);
-      const sent = await signalingService.sendReliable(JSON.stringify({ type: 'START_SESSION', payload: sessionBase64 }));
+      const sent = await signalingService.sendStartSession(sessionBase64);
       if (!sent) throw new Error('Unable to send session configuration');
       this.isStreaming = true;
       this.state.isStreaming = true;
@@ -262,6 +262,3 @@ export class StreamingService {
 }
 
 export const streamingService = new StreamingService();
-
-
-

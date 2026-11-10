@@ -81,4 +81,3 @@ public class MainApplication extends Application implements ReactApplication {
     ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig);
   }
 }
-

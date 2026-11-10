@@ -152,4 +152,3 @@ export function decodeMessageBase64(base64: string, expectedType?: string): Prot
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return decodeMessage(bytes, expectedType);
 }
-

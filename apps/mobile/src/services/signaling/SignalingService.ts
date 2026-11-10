@@ -50,6 +50,10 @@ export class SignalingService {
   async connect(): Promise<void> { await this.transport.connect(); }
   setServerUrl(url: string): void { this.config.serverUrl = url; this.transport.setUrl(url); }
   async sendReliable(data: string): Promise<boolean> { return this.transport.sendReliable(data); }
+  async sendStartSession(payload: string): Promise<boolean> {
+    const message = await authService.authenticateMessage({ type: 'START_SESSION', payload, deviceId: deviceIdentity.getDeviceId() });
+    return this.transport.sendReliable(JSON.stringify(message));
+  }
   async sendOffer(sdp: string, sdpType: string, sessionId?: string): Promise<void> { await this.sendAuthenticated({ type: 'OFFER', sdp, sdpType, sessionId, deviceId: deviceIdentity.getDeviceId() }); }
   async sendIceCandidate(candidate: string, sessionId?: string): Promise<void> { await this.sendAuthenticated({ type: 'ICE_CANDIDATE', candidate, sessionId, deviceId: deviceIdentity.getDeviceId() }); }
   async sendAnswer(sdp: string, sdpType: string, sessionId?: string): Promise<void> { await this.sendAuthenticated({ type: 'ANSWER', sdp, sdpType, sessionId, deviceId: deviceIdentity.getDeviceId() }); }
@@ -82,7 +86,7 @@ export class SignalingService {
     if (message.type === 'PONG') return;
     if (message.type === 'PAIRING_RESPONSE') {
       const result = await pairingService.handlePairingResponse({
-        deviceId: message.deviceId || '', sessionToken: message.sessionToken,
+        deviceId: message.deviceId || '', pairingCode: message.pairingCode || '', sessionToken: message.sessionToken,
         success: message.success === true, errorMessage: message.errorMessage,
         signature: message.signature, signerPublicKey: message.signerPublicKey,
       });
@@ -114,4 +118,3 @@ export class SignalingService {
   getSessionTTL(): number { return authService.getSessionTTL(); }
 }
 export const signalingService = new SignalingService();
-

@@ -29,7 +29,7 @@ export default function ConnectionScreen() {
         Alert.alert('USB Connected', 'Phone connected via USB to computer');
       }
     } catch (error) {
-      Alert.alert('USB Connection Failed', error.message);
+      Alert.alert('USB Connection Failed', error instanceof Error ? error.message : 'Unable to connect to the USB device.');
     }
   };
 

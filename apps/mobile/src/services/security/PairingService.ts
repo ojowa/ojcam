@@ -133,28 +133,19 @@ export class PairingService {
 
   async handlePairingResponse(response: {
     deviceId: string;
+    pairingCode: string;
     sessionToken?: string;
     success: boolean;
     errorMessage?: string;
     signature?: string;
     signerPublicKey?: string;
   }): Promise<PairingResult> {
-    let matchingCode: string | null = null;
-    for (const [code, pairing] of this.pendingPairings.entries()) {
-      if (pairing.deviceId === response.deviceId && !pairing.resolved) {
-        matchingCode = code;
-        break;
-      }
+    const matchingCode = response.pairingCode;
+    const activePairing = this.pendingPairings.get(matchingCode);
+    if (!activePairing || activePairing.deviceId !== response.deviceId || activePairing.resolved) {
+      return { success: false, errorMessage: 'No matching pending pairing' };
     }
-
-    if (!matchingCode) {
-      return {
-        success: false,
-        errorMessage: 'No pending pairing found for this device',
-      };
-    }
-
-    const pairing = this.pendingPairings.get(matchingCode)!;
+    const pairing = activePairing;
 
     if (Date.now() > pairing.expiresAt) {
       pairing.resolved = true;
@@ -179,7 +170,7 @@ export class PairingService {
       this.pendingPairings.delete(matchingCode);
       return { success: false, errorMessage: 'Pairing response is missing its token or desktop signature' };
     }
-    const payload = JSON.stringify({ deviceId: response.deviceId, sessionToken: response.sessionToken, success: true });
+    const payload = JSON.stringify({ deviceId: response.deviceId, pairingCode: response.pairingCode, sessionToken: response.sessionToken, success: true });
     const verified = await deviceIdentity.verifySignature(payload, response.signature, response.signerPublicKey);
     if (!verified) {
       pairing.resolved = true;
@@ -293,4 +284,3 @@ function arrayBufferToBase64Url(buf: ArrayBuffer | Uint8Array): string {
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
-

@@ -364,7 +364,3 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
   }
   return bytes.buffer;
 }
-
-
-
-

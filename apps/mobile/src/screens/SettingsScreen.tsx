@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 
 export default function SettingsScreen() {
   return (

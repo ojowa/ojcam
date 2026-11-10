@@ -80,4 +80,3 @@ export class MDNSDiscovery {
   }
 }
 export const mDNSDiscovery = new MDNSDiscovery();
-

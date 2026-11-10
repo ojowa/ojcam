@@ -21,7 +21,8 @@ export class AuthService {
 
   constructor(config: AuthConfig = defaultAuthConfig) {
     this.config = config;
-    setInterval(() => this.checkSessionExpiry(), 30_000);
+    const timer = setInterval(() => this.checkSessionExpiry(), 30_000);
+    (timer as unknown as { unref?: () => void }).unref?.();
   }
   setOnSessionEstablished(callback: (session: SessionInfo) => void): void { this.onSessionEstablished = callback; }
   setOnSessionExpired(callback: () => void): void { this.onSessionExpired = callback; }
@@ -30,7 +31,7 @@ export class AuthService {
   async establishSession(sessionToken: string, desktopPublicKey?: string): Promise<SessionInfo> {
     if (!sessionToken) throw new Error('A session token is required');
     const now = Date.now();
-    this.session = {
+    const session: SessionInfo = {
       token: sessionToken,
       deviceId: deviceIdentity.getDeviceId(),
       desktopPublicKey,
@@ -38,8 +39,9 @@ export class AuthService {
       expiresAt: now + this.config.sessionExpirationMinutes * 60_000,
       authenticated: true,
     };
-    this.onSessionEstablished?.(this.session);
-    return this.session;
+    this.session = session;
+    this.onSessionEstablished?.(session);
+    return session;
   }
 
   async signMessage(message: Record<string, unknown>): Promise<SignedPayload> {
@@ -64,7 +66,10 @@ export class AuthService {
     if (!session) return { valid: false, reason: 'No active session' };
     if (message.sessionToken !== session.token) return { valid: false, reason: 'Session token missing or mismatched' };
     const key = desktopPublicKey || session.desktopPublicKey;
-    if (!key || typeof message.signature !== 'string' || typeof message.timestamp !== 'number') {
+    if (typeof message.timestamp !== 'number' || Math.abs(Date.now() - message.timestamp) > 5 * 60_000) {
+      return { valid: false, reason: 'Message timestamp is missing or expired' };
+    }
+    if (!key || typeof message.signature !== 'string') {
       return { valid: false, reason: 'Missing desktop signature, key, or timestamp' };
     }
     const payload = JSON.stringify({ type: message.type, sessionId: message.sessionId, timestamp: message.timestamp });
