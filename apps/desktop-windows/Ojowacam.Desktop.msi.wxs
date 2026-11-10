@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Ojowacam Desktop" Language="1033" Version="1.0.0.0" Manufacturer="Ojowacam" UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+    <MediaTemplate />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Ojowacam">
+          <Component Id="MainExecutable" Guid="*">
+            <File Id="MainWindow" Name="Ojowacam.Desktop.exe" Source="bin\Release\net8.0-windows10.0.18362.0\win-x64\Ojowacam.Desktop.exe" />
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ARPPROGRAMMENUGROUP" Name="Ojowacam">
+          <Component Id="StartMenuShortcut" Guid="*">
+            <Shortcut Id="ApplicationStartMenuShortcut" Name="Ojowacam" Description="Ojowacam Desktop" Target="[INSTALLFOLDER]Ojowacam.Desktop.exe" WorkingDirectory="INSTALLFOLDER" />
+            <RemoveFolder Id="CleanUpShortCut" Directory="ARPPROGRAMMENUGROUP" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="MainFeature" Title="Ojowacam Desktop" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Product>
+</Wix>

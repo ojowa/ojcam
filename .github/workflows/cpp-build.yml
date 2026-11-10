@@ -1,0 +1,33 @@
+name: C++ Streaming Core Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cpp-build:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Install CMake and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+      - name: Configure CMake
+        run: |
+          cd packages/streaming-core && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release
+      - name: Build C++ streaming core
+        run: |
+          cd packages/streaming-core/build && make -j$(nproc)

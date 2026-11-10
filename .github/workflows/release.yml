@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows:
+      - Android Build
+      - Windows Desktop Build
+      - macOS Desktop Build
+      - iOS Build
+      - C++ Streaming Core Build
+      - OBS Plugin Build
+      - Dependency Security Scan
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  check-builds:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch != 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+      run_ids: ${{ steps.check.outputs.run_ids }}
+    steps:
+      - name: Wait for all tagged build workflows
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+          EXPECTED_WORKFLOWS: '["Android Build","Windows Desktop Build","macOS Desktop Build","iOS Build","C++ Streaming Core Build","OBS Plugin Build","Dependency Security Scan"]'
+          ARTIFACT_WORKFLOWS: '["Android Build","Windows Desktop Build","macOS Desktop Build","iOS Build","OBS Plugin Build"]'
+        run: |
+          response=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$HEAD_SHA&per_page=100")
+          runs=$(jq -c \
+            --arg sha "$HEAD_SHA" \
+            --arg tag "$RELEASE_TAG" \
+            --argjson expected "$EXPECTED_WORKFLOWS" \
+            '[.workflow_runs[]
+              | select(.head_sha == $sha and .head_branch == $tag and .event == "push" and (.name as $name | $expected | index($name)))
+            ] | sort_by(.id) | group_by(.name) | map(.[-1])' <<< "$response")
+
+          expected_count=$(jq 'length' <<< "$EXPECTED_WORKFLOWS")
+          actual_count=$(jq 'length' <<< "$runs")
+          if [ "$actual_count" -ne "$expected_count" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Release is waiting for tagged workflows ($actual_count/$expected_count found)."
+            exit 0
+          fi
+
+          failed=$(jq -r '.[] | select(.conclusion != "success") | "\(.name): \(.conclusion)"' <<< "$runs")
+          if [ -n "$failed" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Release skipped because tagged workflows did not all succeed:"
+            echo "$failed"
+            exit 0
+          fi
+
+          run_ids=$(jq -c \
+            --argjson artifact_workflows "$ARTIFACT_WORKFLOWS" \
+            '[.[] | select(.name as $name | $artifact_workflows | index($name)) | {run_id: .id, workflow: .name}]' \
+            <<< "$runs")
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "run_ids=$run_ids" >> "$GITHUB_OUTPUT"
+          echo "All tagged build workflows succeeded for $RELEASE_TAG."
+
+  collect-artifacts:
+    needs: check-builds
+    if: needs.check-builds.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(needs.check-builds.outputs.run_ids) }}
+    steps:
+      - name: Download artifacts from build run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ matrix.run.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/${{ matrix.run.workflow }}
+
+      - name: Upload collected artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ matrix.run.workflow }}
+          path: artifacts/${{ matrix.run.workflow }}/
+          if-no-files-found: error
+
+  publish-release:
+    needs: [check-builds, collect-artifacts]
+    if: needs.check-builds.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download collected artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-artifacts-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.workflow_run.head_branch }}
+          target_commitish: ${{ github.event.workflow_run.head_sha }}
+          files: artifacts/**/*
+          generate_release_notes: true

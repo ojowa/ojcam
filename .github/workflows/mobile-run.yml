@@ -1,0 +1,104 @@
+name: Android Emulator Test
+
+on:
+  workflow_run:
+    workflows: ["Android Build"]
+    types: [completed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+  JAVA_VERSION: '17'
+
+jobs:
+  mobile-run:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "11076708"
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0 emulator system-images;android-34;google_apis;x86_64"
+          licenses: " emulator,system-images;android-34;google_apis;x86_64"
+          accept-android-sdk-licenses: true
+      - name: Download mobile CI artifact (debug APK)
+        uses: actions/download-artifact@v4
+        with:
+          name: ojowacam-android-apk
+          path: mobile-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Android emulator (Pixel 6, API 34)
+        run: |
+          echo "y" | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/avdmanager" create avd \
+            -n mobile-ci \
+            -k "system-images;android-34;google_apis;x86_64" \
+            -d pixel_6 \
+            --force
+      - name: Start Android emulator headless
+        run: |
+          nohup "${ANDROID_SDK_ROOT}/emulator/emulator" -avd mobile-ci \
+            -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim \
+            -qemu -m 1536 > emulator.log 2>&1 &
+          echo "emulator launched in background"
+      - name: Wait for emulator to finish booting
+        run: |
+          adb wait-for-device
+          for i in $(seq 1 120); do
+            boot=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')
+            if [ "$boot" = "1" ]; then
+              echo "Emulator booted successfully"
+              exit 0
+            fi
+            echo "Waiting for boot... (${i}/120)"
+            sleep 5
+          done
+          echo "Emulator did not finish booting in time" >&2
+          exit 1
+      - name: Install mobile app from CI artifact
+        run: |
+          adb install -r -g mobile-artifact/com.ojowacam.mobile-debug.apk
+      - name: Launch mobile app
+        run: |
+          adb shell am start -n com.ojowacam.mobile/com.ojowacam.mobile.MainActivity \
+            -a android.intent.action.MAIN -c android.intent.category.LAUNCHER
+          sleep 20
+      - name: Verify mobile app is running
+        run: |
+          for i in $(seq 1 30); do
+            pid=$(adb shell pidof -s com.ojowacam.mobile 2>/dev/null | tr -d '\r\n')
+            if [ -n "$pid" ]; then
+              echo "Mobile app is running (PID: ${pid})"
+              exit 0
+            fi
+            echo "Waiting for app process... (${i}/30)"
+            sleep 3
+          done
+          echo "Mobile app process not found" >&2
+          exit 1
+      - name: Capture logcat for diagnosis
+        if: always()
+        run: |
+          adb logcat -d > mobile-run-logcat.txt 2>/dev/null || true
+      - name: Upload mobile run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-mobile-run-logs
+          path: mobile-run-logcat.txt

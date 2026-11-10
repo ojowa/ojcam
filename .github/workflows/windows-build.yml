@@ -1,0 +1,70 @@
+name: Windows Desktop Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    continue-on-error: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Install WiX Toolset for MSI building
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y
+          }
+          Write-Host "WiX toolset installed"
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore Windows dependencies
+        run: |
+          dotnet restore apps/desktop-windows/Ojowacam.Desktop.csproj
+      - name: Build Windows application
+        run: |
+          dotnet build apps/desktop-windows/Ojowacam.Desktop.csproj -c Release
+      - name: Publish Windows application (self-contained .exe)
+        run: |
+          dotnet publish apps/desktop-windows/Ojowacam.Desktop.csproj -c Release -o ./publish -r win-x64 --self-contained
+      - name: Upload Windows publish artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-windows-publish
+          path: publish/
+      - name: Build Windows MSI installer
+        shell: pwsh
+        run: |
+          heat.exe dir publish -cg DesktopPublishFiles -dr INSTALLFOLDER -srd -scom -sreg -ag -t infrastructure/installers/desktop-publish-x64.xsl -var var.PublishDir -out infrastructure/installers/desktop-publish-files.wxs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'publish'
+          candle.exe "-dPublishDir=$publishDir" -ext WixUIExtension -out infrastructure/installers/ojowacam-desktop.wixobj infrastructure/installers/ojowacam-desktop.wxs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          candle.exe "-dPublishDir=$publishDir" -out infrastructure/installers/desktop-publish-files.wixobj infrastructure/installers/desktop-publish-files.wxs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          light.exe -ext WixUIExtension -out infrastructure/installers/Ojowacam.Desktop.msi infrastructure/installers/ojowacam-desktop.wixobj infrastructure/installers/desktop-publish-files.wixobj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-windows-msi
+          path: infrastructure/installers/Ojowacam.Desktop.msi
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-windows-build
+          path: apps/desktop-windows/bin/Release/
