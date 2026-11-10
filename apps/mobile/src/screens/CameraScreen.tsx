@@ -37,6 +37,7 @@ export default function CameraScreen() {
       await streamingService.stopStreaming();
       setIsStreaming(false);
     } else {
+      // Uses ConnectionConfig signaling URL — never hardcode localhost.
       const success = await streamingService.startStreaming(
         selectedCamera,
         {
@@ -45,7 +46,6 @@ export default function CameraScreen() {
           bitrate: 8000000,
           codec: 'H264',
         },
-        'ws://localhost:8080'
       );
       setIsStreaming(success);
     }

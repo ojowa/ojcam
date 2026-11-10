@@ -16,6 +16,7 @@ import { authService } from './security/AuthService';
 import { pairingService } from './security/PairingService';
 import { deviceIdentity } from './security/DeviceIdentity';
 import { initializeSecureStorage } from './security/SecureStorageAdapter';
+import { connectionConfig } from './config/ConnectionConfig';
 import { createStartSession, type VideoConfig, type AudioConfig } from './protocol/messageTypes';
 import { encodeMessageBase64 } from './protocol/ProtobufCodec';
 
@@ -37,7 +38,7 @@ export interface StreamingState {
 }
 
 export const defaultStreamingConfig: StreamingConfig = {
-  signalingUrl: 'ws://localhost:8080',
+  signalingUrl: connectionConfig.getSignalingUrl(),
   deviceName: 'Ojowacam Mobile',
   autoPair: true,
 };
@@ -131,6 +132,9 @@ export class StreamingService {
     try {
       this.state.error = null;
       initializeSecureStorage();
+      await connectionConfig.load();
+      this.config.signalingUrl = connectionConfig.getSignalingUrl();
+      signalingService.setServerUrl(this.config.signalingUrl);
       await deviceIdentity.initialize();
       await signalingService.initialize();
       await WebRTCService.initWebRTC();
@@ -154,6 +158,57 @@ export class StreamingService {
       this.notifyStateChange();
       return false;
     }
+  }
+
+  /**
+   * Connect to the signaling server at host (or current config if omitted).
+   * Returns the active signaling URL on success.
+   */
+  async connectSignaling(host?: string): Promise<string> {
+    await connectionConfig.load();
+    if (host !== undefined && host !== null && host.trim() !== '') {
+      await connectionConfig.setHost(host);
+    }
+    const url = connectionConfig.getSignalingUrl();
+    this.config.signalingUrl = url;
+    signalingService.setServerUrl(url);
+    this.state.error = null;
+    this.notifyStateChange();
+    try {
+      await signalingService.initialize();
+      if (!signalingService.isConnected()) {
+        await signalingService.connect();
+      }
+      this.state.isConnected = signalingService.isConnected();
+      if (!this.state.isConnected) {
+        throw new Error(`Unable to connect to ${url}`);
+      }
+      this.notifyStateChange();
+      return url;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `Unable to connect to ${url}`;
+      this.state.isConnected = false;
+      this.state.error = message;
+      this.notifyStateChange();
+      throw new Error(message);
+    }
+  }
+
+  async disconnectSignaling(): Promise<void> {
+    signalingService.disconnect();
+    this.state.isConnected = false;
+    this.state.isAuthenticated = false;
+    this.state.isPaired = false;
+    this.state.pairingCode = null;
+    this.notifyStateChange();
+  }
+
+  getSignalingUrl(): string {
+    return connectionConfig.getSignalingUrl();
+  }
+
+  getSignalingHost(): string {
+    return connectionConfig.getHost();
   }
 
   get width(): number {
@@ -220,7 +275,15 @@ export class StreamingService {
     if (this.isStreaming) { console.warn('Already streaming'); return false; }
     try {
       this.state.error = null;
-      if (signalingUrl) { this.config.signalingUrl = signalingUrl; signalingService.setServerUrl(signalingUrl); }
+      await connectionConfig.load();
+      if (signalingUrl && signalingUrl.trim()) {
+        await connectionConfig.setHost(signalingUrl);
+      }
+      this.config.signalingUrl = connectionConfig.getSignalingUrl();
+      signalingService.setServerUrl(this.config.signalingUrl);
+      if (!signalingService.isConnected()) {
+        await signalingService.connect();
+      }
       if (!authService.isAuthenticated()) {
         if (this.config.autoPair) {
           await this.requestPairing();

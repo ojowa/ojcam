@@ -4,6 +4,7 @@ import { pairingService, type PairingQRPayload } from '../security/PairingServic
 import { deviceIdentity } from '../security/DeviceIdentity';
 import { encodeMessage, decodeMessageBase64 } from '../protocol/ProtobufCodec';
 import type { ProtocolMessage } from '../protocol/messageTypes';
+import { connectionConfig } from '../config/ConnectionConfig';
 
 export interface SignalingConfig { serverUrl: string; deviceName: string; autoConnect: boolean }
 export interface SignalingMessage {
@@ -19,7 +20,11 @@ export interface SignalingEventHandlers {
   onPairingCompleted?: (success: boolean, sessionToken?: string, error?: string) => void;
   onError?: (error: Error) => void;
 }
-export const defaultSignalingConfig: SignalingConfig = { serverUrl: 'ws://localhost:8080', deviceName: 'Ojowacam Mobile', autoConnect: true };
+export const defaultSignalingConfig: SignalingConfig = {
+  serverUrl: connectionConfig.getSignalingUrl(),
+  deviceName: 'Ojowacam Mobile',
+  autoConnect: true,
+};
 
 export class SignalingService {
   private config: SignalingConfig;
@@ -43,12 +48,21 @@ export class SignalingService {
     if (this.isInitializing) return;
     this.isInitializing = true;
     try {
+      await connectionConfig.load();
+      this.config.serverUrl = connectionConfig.getSignalingUrl();
+      this.transport.setUrl(this.config.serverUrl);
       await deviceIdentity.initialize();
       if (this.config.autoConnect) await this.connect();
     } finally { this.isInitializing = false; }
   }
-  async connect(): Promise<void> { await this.transport.connect(); }
+  async connect(): Promise<void> {
+    await connectionConfig.load();
+    this.config.serverUrl = connectionConfig.getSignalingUrl();
+    this.transport.setUrl(this.config.serverUrl);
+    await this.transport.connect();
+  }
   setServerUrl(url: string): void { this.config.serverUrl = url; this.transport.setUrl(url); }
+  getServerUrl(): string { return this.config.serverUrl; }
   async sendReliable(data: string): Promise<boolean> { return this.transport.sendReliable(data); }
   async sendStartSession(payload: string): Promise<boolean> {
     const message = await authService.authenticateMessage({ type: 'START_SESSION', payload, deviceId: deviceIdentity.getDeviceId() });

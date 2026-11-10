@@ -35,6 +35,8 @@ jest.mock('react-native', () => ({
       addVideoTrack: jest.fn(),
       addAudioTrack: jest.fn(),
       closeConnection: jest.fn(),
+      addListener: jest.fn(),
+      removeListeners: jest.fn(),
     },
     OjowacamUSB: {
       initialize: jest.fn(),

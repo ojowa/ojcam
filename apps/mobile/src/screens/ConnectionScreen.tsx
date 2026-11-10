@@ -3,27 +3,42 @@ import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch, Alert, Te
 import { StatusBar } from 'expo-status-bar';
 import { USBService } from '../services/usb/USBService';
 import { streamingService } from '../services/StreamingService';
+import { connectionConfig } from '../services/config/ConnectionConfig';
 
 export default function ConnectionScreen() {
   const [connectionMode, setConnectionMode] = React.useState<'wifi' | 'usb'>('wifi');
   const [usbDevices, setUSBDevices] = React.useState<Array<{id: string; name: string; type: string}>>([]);
   const [isUsbConnected, setIsUsbConnected] = React.useState(false);
   const [wifiStatus, setWifiStatus] = React.useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [signalingHost, setSignalingHost] = React.useState('');
+  const [signalingUrl, setSignalingUrl] = React.useState('');
   const [pairingCode, setPairingCode] = React.useState<string | null>(null);
   const [pairingBusy, setPairingBusy] = React.useState(false);
   const [showCodeEntry, setShowCodeEntry] = React.useState(false);
   const [manualCode, setManualCode] = React.useState('');
   const [isPaired, setIsPaired] = React.useState(false);
+  const [connectionError, setConnectionError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    streamingService.setOnStateChange((state) => {
+    let cancelled = false;
+    const applyState = (state: ReturnType<typeof streamingService.getState>) => {
+      if (cancelled) return;
       setPairingCode(state.pairingCode);
       setIsPaired(state.isPaired);
-    });
-    const state = streamingService.getState();
-    setPairingCode(state.pairingCode);
-    setIsPaired(state.isPaired);
+      setWifiStatus(state.isConnected ? 'connected' : 'disconnected');
+      if (state.isConnected) setConnectionError(null);
+      else if (state.error && !state.pairingCode) setConnectionError(state.error);
+    };
+    streamingService.setOnStateChange(applyState);
+    applyState(streamingService.getState());
+    void (async () => {
+      await connectionConfig.load();
+      if (cancelled) return;
+      setSignalingHost(connectionConfig.getHost());
+      setSignalingUrl(connectionConfig.getSignalingUrl());
+    })();
     return () => {
+      cancelled = true;
       streamingService.setOnStateChange(() => undefined);
     };
   }, []);
@@ -59,18 +74,35 @@ export default function ConnectionScreen() {
   };
 
   const connectWiFi = async () => {
+    if (wifiStatus === 'connecting') return;
     setWifiStatus('connecting');
-    setTimeout(() => {
+    setConnectionError(null);
+    try {
+      const host = signalingHost.trim();
+      const url = await streamingService.connectSignaling(host || undefined);
+      setSignalingUrl(url);
+      setSignalingHost(connectionConfig.getHost());
       setWifiStatus('connected');
-    }, 1500);
+    } catch (error) {
+      setWifiStatus('disconnected');
+      const message = error instanceof Error ? error.message : 'Unable to reach the signaling server.';
+      setConnectionError(message);
+      Alert.alert('Wi-Fi Connection Failed', message);
+    }
   };
 
   const disconnectWiFi = async () => {
+    await streamingService.disconnectSignaling();
     setWifiStatus('disconnected');
+    setConnectionError(null);
   };
 
   const handleShowPairing = async () => {
     if (pairingBusy) return;
+    if (wifiStatus !== 'connected') {
+      Alert.alert('Not Connected', 'Connect to the signaling server first.');
+      return;
+    }
     setPairingBusy(true);
     try {
       await streamingService.initialize();
@@ -91,6 +123,10 @@ export default function ConnectionScreen() {
     const code = manualCode.trim();
     if (!code) {
       Alert.alert('Missing Code', 'Enter the pairing code shown on your desktop.');
+      return;
+    }
+    if (wifiStatus !== 'connected') {
+      Alert.alert('Not Connected', 'Connect to the signaling server first.');
       return;
     }
     setPairingBusy(true);
@@ -149,12 +185,49 @@ export default function ConnectionScreen() {
       {connectionMode === 'wifi' && (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Wi-Fi Connection</Text>
+          <Text style={styles.fieldLabel}>Desktop host</Text>
+          <TextInput
+            style={styles.hostInput}
+            value={signalingHost}
+            onChangeText={setSignalingHost}
+            placeholder="e.g. 192.168.1.20 (desktop LAN IP)"
+            placeholderTextColor="#999"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            editable={wifiStatus !== 'connected'}
+          />
+          <Text style={styles.hostHint}>
+            Use your computer&apos;s LAN IP on a physical device. localhost only works in an emulator.
+          </Text>
+          {signalingUrl ? (
+            <Text style={styles.hostUrl}>Endpoint: {signalingUrl}</Text>
+          ) : null}
           <View style={styles.statusRow}>
             <View style={[styles.statusDot, wifiStatus === 'connected' && styles.statusDotConnected]} />
-            <Text>{wifiStatus === 'connected' ? 'Connected' : wifiStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}</Text>
+            <Text>
+              {wifiStatus === 'connected'
+                ? 'Connected'
+                : wifiStatus === 'connecting'
+                  ? 'Connecting...'
+                  : 'Disconnected'}
+            </Text>
           </View>
-          <TouchableOpacity style={styles.button} onPress={wifiStatus === 'connected' ? disconnectWiFi : connectWiFi}>
-            <Text style={styles.buttonText}>{wifiStatus === 'connected' ? 'Disconnect Wi-Fi' : 'Connect Wi-Fi'}</Text>
+          {connectionError && wifiStatus !== 'connected' ? (
+            <Text style={styles.connectionError}>{connectionError}</Text>
+          ) : null}
+          <TouchableOpacity
+            style={[styles.button, wifiStatus === 'connecting' && styles.buttonDisabled]}
+            onPress={wifiStatus === 'connected' ? disconnectWiFi : connectWiFi}
+            disabled={wifiStatus === 'connecting'}
+          >
+            <Text style={styles.buttonText}>
+              {wifiStatus === 'connected'
+                ? 'Disconnect'
+                : wifiStatus === 'connecting'
+                  ? 'Connecting…'
+                  : 'Connect'}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -424,5 +497,38 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#1a1a1a',
     backgroundColor: '#f9f9f9',
+  },
+  fieldLabel: {
+    color: '#666',
+    fontSize: 13,
+    marginBottom: 6,
+  },
+  hostInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#1a1a1a',
+    backgroundColor: '#f9f9f9',
+    marginBottom: 6,
+  },
+  hostHint: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 8,
+    lineHeight: 16,
+  },
+  hostUrl: {
+    color: '#007AFF',
+    fontSize: 12,
+    marginBottom: 8,
+    fontFamily: 'monospace',
+  },
+  connectionError: {
+    color: '#FF3B30',
+    fontSize: 13,
+    marginBottom: 10,
   },
 });

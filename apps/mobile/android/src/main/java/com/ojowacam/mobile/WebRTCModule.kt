@@ -1,10 +1,13 @@
 package com.ojowacam.mobile
 
 import android.util.Log
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.webrtc.*
 import org.webrtc.audio.JavaAudioDeviceModule
 
@@ -18,11 +21,44 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     private var videoSource: VideoSource? = null
     private var audioSource: AudioSource? = null
     private var videoSink: VideoSink? = null
-    private var onLocalSdp: ((String, String) -> Unit)? = null
-    private var onIceCandidate: ((String) -> Unit)? = null
-    private var onConnectionStateChange: ((String) -> Unit)? = null
 
     override fun getName(): String = "OjowacamWebRTC"
+
+    // Required by React Native NativeEventEmitter.
+    @ReactMethod
+    fun addListener(eventName: String) {}
+
+    @ReactMethod
+    fun removeListeners(count: Double) {}
+
+    private fun emitEvent(eventName: String, params: WritableMap) {
+        try {
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(eventName, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to emit $eventName", e)
+        }
+    }
+
+    private fun emitLocalSdp(type: String, sdp: String) {
+        val map = Arguments.createMap()
+        map.putString("type", type)
+        map.putString("sdp", sdp)
+        emitEvent("onLocalSdp", map)
+    }
+
+    private fun emitIceCandidate(candidate: String) {
+        val map = Arguments.createMap()
+        map.putString("candidate", candidate)
+        emitEvent("onIceCandidate", map)
+    }
+
+    private fun emitConnectionStateChange(state: String) {
+        val map = Arguments.createMap()
+        map.putString("state", state)
+        emitEvent("onConnectionStateChange", map)
+    }
 
     @ReactMethod
     fun initWebRTC(promise: Promise) {
@@ -66,10 +102,10 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             pcConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveVideo", "false"))
             peerConnection = peerConnectionFactory!!.createPeerConnection(config, pcConstraints, object : PeerConnection.Observer {
                 override fun onIceCandidate(iceCandidate: IceCandidate) {
-                    onIceCandidate?.invoke(iceCandidate.sdp)
+                    emitIceCandidate(iceCandidate.sdp)
                 }
                 override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState) {
-                    onConnectionStateChange?.invoke(newState.name)
+                    emitConnectionStateChange(newState.name)
                     Log.d(TAG, "ICE connection state: $newState")
                 }
                 override fun onAddStream(stream: MediaStream) {
@@ -164,11 +200,16 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 override fun onCreateSuccess(sessionDescription: SessionDescription) {
                     pc.setLocalDescription(object : SdpObserver {
                         override fun onCreateSuccess(s: SessionDescription) {}
-                        override fun onSetSuccess() { Log.d(TAG, "Local description set") }
-                        override fun onSetFailure(s: String) { Log.e(TAG, "Failed to set local description: $s") }
+                        override fun onSetSuccess() {
+                            Log.d(TAG, "Local description set")
+                            emitLocalSdp(sessionDescription.type.canonicalString(), sessionDescription.description)
+                        }
+                        override fun onSetFailure(s: String) {
+                            Log.e(TAG, "Failed to set local description: $s")
+                            emitLocalSdp(sessionDescription.type.canonicalString(), sessionDescription.description)
+                        }
                         override fun onFailure(s: String) { Log.e(TAG, "Create offer failed: $s") }
                     }, sessionDescription)
-                    onLocalSdp?.invoke(sessionDescription.type.canonicalString(), sessionDescription.description)
                 }
                 override fun onSetSuccess() {}
                 override fun onSetFailure(s: String) {
@@ -207,7 +248,17 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun addIceCandidate(candidate: String, promise: Promise) {
         try {
             val pc = peerConnection ?: throw Exception("No peer connection")
-            val iceCandidate = IceCandidate.create(candidate)
+            // Accept either a bare candidate line or a JSON {sdpMid,sdpMLineIndex,candidate} payload.
+            val iceCandidate = try {
+                val json = org.json.JSONObject(candidate)
+                IceCandidate(
+                    json.optString("sdpMid", "0"),
+                    json.optInt("sdpMLineIndex", 0),
+                    json.getString("candidate")
+                )
+            } catch (_: Exception) {
+                IceCandidate("0", 0, candidate)
+            }
             pc.addIceCandidate(iceCandidate)
             promise.resolve(true)
         } catch (e: Exception) {

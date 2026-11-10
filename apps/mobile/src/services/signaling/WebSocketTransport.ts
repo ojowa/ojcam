@@ -7,6 +7,7 @@ export type TransportMessageHandler = (data: string) => void;
 export type TransportStateHandler = (state: TransportState) => void;
 export type TransportErrorHandler = (error: Error) => void;
 export const defaultTransportConfig: TransportConfig = { url: 'ws://localhost:8080', reconnectIntervalMs: 3000, maxReconnectAttempts: 10, heartbeatIntervalMs: 15000, heartbeatTimeoutMs: 5000, messageQueueMaxSize: 100 };
+// Default URL is overridden at connect time via ConnectionConfig (desktop LAN host).
 
 export class WebSocketTransport {
   private config: TransportConfig;

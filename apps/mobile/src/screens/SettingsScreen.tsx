@@ -1,11 +1,71 @@
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch, TextInput, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { connectionConfig } from '../services/config/ConnectionConfig';
 
 export default function SettingsScreen() {
+  const [host, setHost] = React.useState('');
+  const [endpoint, setEndpoint] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    void (async () => {
+      await connectionConfig.load();
+      setHost(connectionConfig.getHost());
+      setEndpoint(connectionConfig.getSignalingUrl());
+    })();
+  }, []);
+
+  const saveHost = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const url = await connectionConfig.setHost(host);
+      setEndpoint(url);
+      setHost(connectionConfig.getHost());
+      Alert.alert('Saved', `Signaling endpoint set to ${url}`);
+    } catch (error) {
+      Alert.alert('Invalid Host', error instanceof Error ? error.message : 'Unable to save host.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetHost = async () => {
+    const url = await connectionConfig.resetHost();
+    setHost(connectionConfig.getHost());
+    setEndpoint(url);
+  };
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.card}>
         <Text style={styles.title}>Settings</Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Signaling Server</Text>
+        <Text style={styles.fieldLabel}>Desktop host / IP</Text>
+        <TextInput
+          style={styles.input}
+          value={host}
+          onChangeText={setHost}
+          placeholder="e.g. 192.168.1.20"
+          placeholderTextColor="#999"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+        <Text style={styles.hint}>
+          On a physical phone, use your computer&apos;s LAN IP. localhost only works in an emulator.
+        </Text>
+        <Text style={styles.endpoint}>Active: {endpoint}</Text>
+        <TouchableOpacity style={styles.button} onPress={saveHost} disabled={saving}>
+          <Text style={styles.buttonText}>{saving ? 'Saving…' : 'Save Host'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.buttonOutline} onPress={() => void resetHost()}>
+          <Text style={styles.buttonOutlineText}>Reset to localhost</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
@@ -78,5 +138,57 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+  },
+  fieldLabel: {
+    color: '#666',
+    fontSize: 13,
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#1a1a1a',
+    backgroundColor: '#f9f9f9',
+    marginBottom: 8,
+  },
+  hint: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 8,
+    lineHeight: 16,
+  },
+  endpoint: {
+    color: '#007AFF',
+    fontSize: 13,
+    marginBottom: 12,
+    fontFamily: 'monospace',
+  },
+  button: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  buttonOutline: {
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center',
+  },
+  buttonOutlineText: {
+    color: '#007AFF',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
