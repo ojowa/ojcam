@@ -14,10 +14,6 @@
                         },
     "name":  "ojowacam",
     "private":  true,
-    "workspaces":  [
-                       "apps/*",
-                       "packages/*"
-                   ],
     "main":  "index.js",
     "license":  "ISC",
     "keywords":  [
