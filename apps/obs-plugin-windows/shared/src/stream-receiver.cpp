@@ -11,7 +11,7 @@ struct StreamReceiver::Impl {
     obs_source_t* video_source = nullptr;
     obs_source_t* audio_source = nullptr;
 
-    std::unique_ptr<Transport> transport;
+    std::unique_ptr<WebRTCTransport> transport;
     std::unique_ptr<VideoDecoder> video_decoder;
     std::unique_ptr<AudioDecoder> audio_decoder;
     std::unique_ptr<StreamSynchronizer> synchronizer;
@@ -52,16 +52,31 @@ StreamReceiver::StreamReceiver(obs_source_t* video_source, obs_source_t* audio_s
 
     // Transport → decoder pipeline
     impl_->transport->onVideoFrame = [this](const VideoFrame& frame) {
-        // Feed raw transport data into video decoder
         impl_->video_decoder->decode(frame.data, frame.timestamp_us);
     };
 
+    // Transport delivers decoded PCM audio in AudioFrame::samples
     impl_->transport->onAudioFrame = [this](const AudioFrame& frame) {
-        impl_->audio_decoder->decode(frame.data, frame.timestamp_us);
+        pushAudioFrameToOBS(frame);
     };
 
     impl_->transport->onConnectionStateChanged = [this](bool connected) {
         impl_->connected = connected;
+        if (!connected) {
+            scheduleReconnect();
+        }
+    };
+
+    // Decoder → OBS output pipeline
+    impl_->video_decoder->onFrameDecoded = [this](const VideoFrame& frame) {
+        pushVideoFrameToOBS(frame);
+    };
+
+    impl_->audio_decoder->onFrameDecoded = [this](const AudioFrame& frame) {
+        pushAudioFrameToOBS(frame);
+    };
+}
+
 StreamReceiver::~StreamReceiver() {
     disconnect();
     delete impl_;
@@ -113,6 +128,10 @@ bool StreamReceiver::connect(const std::string& device_id,
     impl_->transport->createOffer();
     impl_->connected = true;
 
+    blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
+    return true;
+}
+
 void StreamReceiver::pushVideoFrameToOBS(const VideoFrame& frame) {
     if (!impl_->video_source) return;
 
@@ -123,30 +142,30 @@ void StreamReceiver::pushVideoFrameToOBS(const VideoFrame& frame) {
     if (!texture) return;
 
     // Push to OBS video source using the converted texture data
-    // obs_source_output_video expects raw pixel data; we upload to texture
-    // first, then the source's render callback will sample from it.
-    // For async video sources, we push a frame with the texture data pointer.
     obs_source_frame obs_frame{};
     obs_frame.format = VIDEO_FORMAT_RGBA;
     obs_frame.width = frame.width;
     obs_frame.height = frame.height;
     obs_frame.timestamp = frame.timestamp_us * 1000; // us -> ns
-    obs_frame.data[0] = frame.data.data();
-    obs_frame.linesize[0] = frame.width * 4 * sizeof(uint8_t);
+    obs_frame.data[0] = const_cast<uint8_t*>(frame.data.data());
+    obs_frame.linesize[0] = frame.width * 4 * static_cast<uint32_t>(sizeof(uint8_t));
 
     obs_source_output_video(impl_->video_source, &obs_frame);
 }
 
 void StreamReceiver::pushAudioFrameToOBS(const AudioFrame& frame) {
     if (!impl_->audio_source) return;
+    if (frame.samples.empty() || frame.channels <= 0) return;
 
-    obs_source_output_audio(impl_->audio_source,
-                            frame.samples.data(),
-                            frame.samples.size(),
-                            SAMPLE_FORMAT_FLOAT,
-                            frame.sample_rate,
-                            frame.channels,
-                            frame.timestamp_us * 1000); // us -> ns
+    struct obs_source_audio audio{};
+    audio.data[0] = reinterpret_cast<const uint8_t*>(frame.samples.data());
+    audio.frames = static_cast<uint32_t>(frame.samples.size() / static_cast<size_t>(frame.channels));
+    audio.speakers = (frame.channels == 1) ? SPEAKERS_MONO : SPEAKERS_STEREO;
+    audio.format = AUDIO_FORMAT_FLOAT;
+    audio.samples_per_sec = static_cast<uint32_t>(frame.sample_rate);
+    audio.timestamp = static_cast<uint64_t>(frame.timestamp_us) * 1000; // us -> ns
+
+    obs_source_output_audio(impl_->audio_source, &audio);
 }
 
 void StreamReceiver::setVideoSource(obs_source_t* source) {
@@ -161,27 +180,10 @@ bool StreamReceiver::isConnected() const {
     return impl_->connected;
 }
 
-} // namespace ojowacam
-    blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
-    return true;
-}
-
 void StreamReceiver::disconnect() {
     impl_->transport->disconnect();
     impl_->connected = false;
     impl_->synchronizer->reset();
 }
-        if (!connected) {
-            scheduleReconnect();
-        }
-    };
 
-    // Decoder → OBS output pipeline
-    impl_->video_decoder->onFrameDecoded = [this](const VideoFrame& frame) {
-        pushVideoFrameToOBS(frame);
-    };
-
-    impl_->audio_decoder->onFrameDecoded = [this](const AudioFrame& frame) {
-        pushAudioFrameToOBS(frame);
-    };
-}
+} // namespace ojowacam

@@ -1,12 +1,3 @@
-/**
- * AuthService.ts
- * 
- * Session token management and authentication for the mobile app.
- * 
- * Security requirement: "Authentication: The desktop application only accepts
- * connections from paired devices" (SECURITY.md)
- */
-
 import { deviceIdentity, type SignedPayload } from './DeviceIdentity';
 import { pairingService } from './PairingService';
 
@@ -18,14 +9,8 @@ export interface SessionInfo {
   expiresAt: number;
   authenticated: boolean;
 }
-
-export interface AuthConfig {
-  sessionExpirationMinutes: number;
-}
-
-export const defaultAuthConfig: AuthConfig = {
-  sessionExpirationMinutes: 10,
-};
+export interface AuthConfig { sessionExpirationMinutes: number }
+export const defaultAuthConfig: AuthConfig = { sessionExpirationMinutes: 10 };
 
 export class AuthService {
   private config: AuthConfig;
@@ -36,158 +21,70 @@ export class AuthService {
 
   constructor(config: AuthConfig = defaultAuthConfig) {
     this.config = config;
-    setInterval(() => this.checkSessionExpiry(), 30 * 1000).unref?.();
+    setInterval(() => this.checkSessionExpiry(), 30_000);
   }
+  setOnSessionEstablished(callback: (session: SessionInfo) => void): void { this.onSessionEstablished = callback; }
+  setOnSessionExpired(callback: () => void): void { this.onSessionExpired = callback; }
+  setOnAuthenticationRequired(callback: () => void): void { this.onAuthenticationRequired = callback; }
 
-  setOnSessionEstablished(callback: (session: SessionInfo) => void): void {
-    this.onSessionEstablished = callback;
-  }
-
-  setOnSessionExpired(callback: () => void): void {
-    this.onSessionExpired = callback;
-  }
-
-  setOnAuthenticationRequired(callback: () => void): void {
-    this.onAuthenticationRequired = callback;
-  }
-
-  async establishSession(
-    sessionToken: string,
-    desktopPublicKey?: string
-  ): Promise<SessionInfo> {
-    const deviceId = deviceIdentity.getDeviceId();
+  async establishSession(sessionToken: string, desktopPublicKey?: string): Promise<SessionInfo> {
+    if (!sessionToken) throw new Error('A session token is required');
     const now = Date.now();
-    const expiresAt = now + this.config.sessionExpirationMinutes * 60 * 1000;
-
     this.session = {
       token: sessionToken,
-      deviceId,
+      deviceId: deviceIdentity.getDeviceId(),
       desktopPublicKey,
       issuedAt: now,
-      expiresAt,
+      expiresAt: now + this.config.sessionExpirationMinutes * 60_000,
       authenticated: true,
     };
-
+    this.onSessionEstablished?.(this.session);
+    return this.session;
+  }
 
   async signMessage(message: Record<string, unknown>): Promise<SignedPayload> {
     const session = this.getSession();
     if (!session) {
+      this.onAuthenticationRequired?.();
       throw new Error('No active session. Pairing required.');
     }
-
-    const payload = JSON.stringify({
-      ...message,
-      deviceId: session.deviceId,
-      sessionToken: session.token,
-      timestamp: Date.now(),
-    });
-
+    const payload = JSON.stringify({ ...message, deviceId: session.deviceId, sessionToken: session.token, timestamp: Date.now() });
     return deviceIdentity.signPayload(payload);
   }
 
   async authenticateMessage(message: Record<string, unknown>): Promise<Record<string, unknown>> {
     const session = this.getSession();
-    if (!session) {
-      return { ...message, authenticated: false };
-    }
-
+    if (!session) return { ...message, authenticated: false };
     const signed = await this.signMessage(message);
-
-    return {
-      ...message,
-      deviceId: session.deviceId,
-      sessionToken: session.token,
-      signature: signed.signature,
-      signatureAlgorithm: signed.algorithm,
-      timestamp: Date.now(),
-      authenticated: true,
-    };
+    return { ...message, deviceId: session.deviceId, sessionToken: session.token, signature: signed.signature, signatureAlgorithm: signed.algorithm, timestamp: Date.now(), authenticated: true };
   }
 
-  async validateIncomingMessage(
-    message: Record<string, unknown>,
-    desktopPublicKey?: string
-  ): Promise<{ valid: boolean; reason?: string }> {
+  async validateIncomingMessage(message: Record<string, unknown>, desktopPublicKey?: string): Promise<{ valid: boolean; reason?: string }> {
     const session = this.getSession();
-    if (!session) {
-      return { valid: false, reason: 'No active session' };
+    if (!session) return { valid: false, reason: 'No active session' };
+    if (message.sessionToken !== session.token) return { valid: false, reason: 'Session token missing or mismatched' };
+    const key = desktopPublicKey || session.desktopPublicKey;
+    if (!key || typeof message.signature !== 'string' || typeof message.timestamp !== 'number') {
+      return { valid: false, reason: 'Missing desktop signature, key, or timestamp' };
     }
-
-    if (message.signature && (desktopPublicKey || session.desktopPublicKey)) {
-      const key = desktopPublicKey || session.desktopPublicKey!;
-      const payload = JSON.stringify({
-        type: message.type,
-        sessionId: message.sessionId,
-        timestamp: message.timestamp,
-      });
-
-      const verified = await deviceIdentity.verifySignature(
-        payload,
-        message.signature as string,
-        key
-      );
-      if (!verified) {
-        return { valid: false, reason: 'Invalid desktop signature' };
-      }
-    }
-
-    if (message.sessionToken && message.sessionToken !== session.token) {
-      return { valid: false, reason: 'Session token mismatch' };
-    }
-
-    return { valid: true };
+    const payload = JSON.stringify({ type: message.type, sessionId: message.sessionId, timestamp: message.timestamp });
+    const verified = await deviceIdentity.verifySignature(payload, message.signature, key);
+    return verified ? { valid: true } : { valid: false, reason: 'Invalid desktop signature' };
   }
 
   expireSession(): void {
-    if (this.session) {
-      this.session = null;
-      this.onSessionExpired?.call(this);
-    }
+    if (this.session) { this.session = null; this.onSessionExpired?.(); }
   }
-
   private checkSessionExpiry(): void {
-    if (this.session && Date.now() > this.session.expiresAt) {
-      this.session = null;
-      this.onSessionExpired?.call(this);
-    }
+    if (this.session && Date.now() >= this.session.expiresAt) this.expireSession();
   }
-
-  getSessionTTL(): number {
-    if (!this.session) {
-      return 0;
-    }
-    return Math.max(0, Math.ceil((this.session.expiresAt - Date.now()) / 1000));
-  }
-
-  isPaired(): boolean {
-    return pairingService.getPendingPairings().length === 0 && this.isAuthenticated();
-  }
-}
-
-export const authService = new AuthService();
-
-    this.onSessionEstablished?.call(this, this.session);
-    return this.session;
-  }
-
   getSession(): SessionInfo | null {
-    if (!this.session) {
-      return null;
-    }
-    if (Date.now() > this.session.expiresAt) {
-      this.session = null;
-      this.onSessionExpired?.call(this);
-      return null;
-    }
+    if (this.session && Date.now() >= this.session.expiresAt) this.expireSession();
     return this.session;
   }
-
-  isAuthenticated(): boolean {
-    const session = this.getSession();
-    return session !== null && session.authenticated;
-  }
-
-  getAuthToken(): string | null {
-    const session = this.getSession();
-    return session?.token ?? null;
-  }
+  isAuthenticated(): boolean { return this.getSession()?.authenticated === true; }
+  getAuthToken(): string | null { return this.getSession()?.token ?? null; }
+  getSessionTTL(): number { const session = this.getSession(); return session ? Math.max(0, Math.ceil((session.expiresAt - Date.now()) / 1000)) : 0; }
+  isPaired(): boolean { return pairingService.getPendingPairings().length === 0 && this.isAuthenticated(); }
+}
+export const authService = new AuthService();

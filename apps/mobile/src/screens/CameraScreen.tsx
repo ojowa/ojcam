@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, StatusBar } from 'react-native';
-import { CameraService, streamingService } from '../services/StreamingService';
+import { CameraService } from '../native/modules';
+import { streamingService } from '../services/StreamingService';
 import { CameraDevice } from '../native/modules';
 
 export default function CameraScreen() {

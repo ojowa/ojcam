@@ -1,4 +1,4 @@
-﻿/**
+/**
  * StreamingService.ts
  * Orchestrates camera, audio, encoder, WebRTC, signaling, and security.
  */
@@ -44,6 +44,7 @@ export const defaultStreamingConfig: StreamingConfig = {
 export class StreamingService {
   private config: StreamingConfig;
   private isStreaming = false;
+  private streamResourcesStarted = false;
   private currentCameraId: string | null = null;
   private streamConfig: StreamConfig = {
     resolution: '1920x1080',
@@ -121,7 +122,6 @@ export class StreamingService {
   async initialize(): Promise<boolean> {
     try {
       this.state.error = null;
-      await deviceIdentity.initialize();
       initializeSecureStorage();
       await deviceIdentity.initialize();
       await signalingService.initialize();
@@ -162,7 +162,7 @@ export class StreamingService {
     if (this.isStreaming) { console.warn('Already streaming'); return false; }
     try {
       this.state.error = null;
-      if (signalingUrl) { this.config.signalingUrl = signalingUrl; }
+      if (signalingUrl) { this.config.signalingUrl = signalingUrl; signalingService.setServerUrl(signalingUrl); }
       if (!authService.isAuthenticated()) {
         if (this.config.autoPair) {
           await signalingService.requestPairing();
@@ -176,6 +176,7 @@ export class StreamingService {
       }
       this.streamConfig = config;
       this.currentCameraId = cameraId;
+      this.streamResourcesStarted = true;
       await CameraService.startCapture(cameraId, this.width, this.height, config.fps);
       await AudioService.startRecording();
       await EncoderService.initEncoder(this.width, this.height, config.bitrate, config.fps);
@@ -187,9 +188,10 @@ export class StreamingService {
         resolution: config.resolution, fps: config.fps, codec: config.codec, bitrate: config.bitrate,
       };
       const audioConfig: AudioConfig = { codec: 'OPUS', sampleRate: 48000, channels: 2 };
-      const sessionMsg = createStartSession(signalingService.getState().attemptCount.toString(), videoConfig, audioConfig);
+      const sessionMsg = createStartSession(`${deviceIdentity.getDeviceId()}-${Date.now()}`, videoConfig, audioConfig);
       const sessionBase64 = encodeMessageBase64(sessionMsg as import('./protocol/messageTypes').StartSession);
-      void signalingService.transport.sendReliable(JSON.stringify({ type: 'START_SESSION', payload: sessionBase64 }));
+      const sent = await signalingService.sendReliable(JSON.stringify({ type: 'START_SESSION', payload: sessionBase64 }));
+      if (!sent) throw new Error('Unable to send session configuration');
       this.isStreaming = true;
       this.state.isStreaming = true;
       this.state.currentCameraId = cameraId;
@@ -208,25 +210,21 @@ export class StreamingService {
   }
 
   async stopStreaming(): Promise<boolean> {
-    if (!this.isStreaming) { return true; }
-    try {
-      await WebRTCService.closeConnection();
-      await EncoderService.releaseEncoder();
-      await AudioService.stopRecording();
-      await CameraService.stopCapture();
-      this.isStreaming = false;
-      this.state.isStreaming = false;
-      this.state.currentCameraId = null;
-      this.state.error = null;
-      this.notifyStateChange();
-      console.log('Streaming stopped');
-      return true;
-    } catch (error) {
-      console.error('Failed to stop streaming:', error);
-      this.state.error = error instanceof Error ? error.message : 'Failed to stop streaming';
-      this.notifyStateChange();
-      return false;
-    }
+    if (!this.isStreaming && !this.streamResourcesStarted) return true;
+    const results = await Promise.allSettled([
+      WebRTCService.closeConnection(), EncoderService.releaseEncoder(),
+      AudioService.stopRecording(), CameraService.stopCapture(),
+    ]);
+    this.streamResourcesStarted = false;
+    this.isStreaming = false;
+    this.state.isStreaming = false;
+    this.state.currentCameraId = null;
+    const failure = results.find(result => result.status === 'rejected');
+    this.state.error = failure?.status === 'rejected'
+      ? (failure.reason instanceof Error ? failure.reason.message : 'Failed to release streaming resources')
+      : null;
+    this.notifyStateChange();
+    return failure === undefined;
   }
 
   async handleIncomingSignalingMessage(message: any): Promise<void> {
@@ -264,3 +262,6 @@ export class StreamingService {
 }
 
 export const streamingService = new StreamingService();
+
+
+

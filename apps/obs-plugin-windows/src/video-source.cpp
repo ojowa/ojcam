@@ -25,7 +25,6 @@ obs_source_info ojowacam_video_source_info = [] {
     info.destroy = ojowacam_video_destroy;
     info.get_width = ojowacam_video_width;
     info.get_height = ojowacam_video_height;
-    info.get_default_size = ojowacam_video_get_default_size;
     info.video_render = ojowacam_video_render;
     info.update = ojowacam_video_update;
     info.get_properties = ojowacam_video_properties;
@@ -77,16 +76,10 @@ void ojowacam_video_destroy(void *data)
 
 void ojowacam_video_render(void *data, gs_effect_t *effect)
 {
-    auto *d = static_cast<OjowacamVideoData *>(data);
-
-    gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
-    if (!image) return;
-
-    gs_texture_t *tex = gs_effect_get_texture(image);
-    if (!tex) return;
-
-    gs_effect_set_texture(image, tex);
-    gs_draw_sprite(tex, 0, d->width, d->height);
+    // Async sources (OBS_SOURCE_ASYNC_VIDEO) are drawn by libobs from the
+    // frame pushed via obs_source_output_video. No custom draw required.
+    UNUSED_PARAMETER(data);
+    UNUSED_PARAMETER(effect);
 }
 
 uint32_t ojowacam_video_width(void *data)
@@ -99,14 +92,6 @@ uint32_t ojowacam_video_height(void *data)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
     return d->height;
-}
-
-bool ojowacam_video_get_default_size(obs_data_t *settings, uint32_t *cx, uint32_t *cy)
-{
-    UNUSED_PARAMETER(settings);
-    *cx = 1920;
-    *cy = 1080;
-    return true;
 }
 
 void ojowacam_video_update(void *data, obs_data_t *settings)

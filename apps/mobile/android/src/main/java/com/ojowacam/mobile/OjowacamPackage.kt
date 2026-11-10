@@ -24,7 +24,4 @@ class OjowacamPackage : ReactPackage {
         return Collections.emptyList()
     }
 
-    override fun createJSModules(): List<Class<out JavaScriptModule>> {
-        return Collections.emptyList()
-    }
 }

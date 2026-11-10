@@ -11,11 +11,6 @@ const char *obs_module_name(void)
     return "Ojowacam OBS Plugin";
 }
 
-const char *obs_module_ver(void)
-{
-    return "1.0.0";
-}
-
 bool obs_module_load(void)
 {
     // Register Ojowacam video source
@@ -25,7 +20,7 @@ bool obs_module_load(void)
     obs_register_source(&ojowacam_audio_source_info);
 
     // Initialize device manager
-    DeviceManager::GetInstance()->Initialize();
+    ojowacam::DeviceManager::GetInstance()->Initialize();
 
     return true;
 }
@@ -33,5 +28,5 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
     // Cleanup device manager
-    DeviceManager::GetInstance()->Shutdown();
+    ojowacam::DeviceManager::GetInstance()->Shutdown();
 }

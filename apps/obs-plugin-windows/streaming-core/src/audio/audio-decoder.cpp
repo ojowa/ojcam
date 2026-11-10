@@ -1,4 +1,4 @@
-#include "audio/audio-decoder.h"
+#include "decoder/audio-decoder.h"
 #include <cstring>
 #include <cmath>
 #include <obs-module.h>
@@ -52,8 +52,6 @@ bool OpusAudioDecoder::initialize(int sample_rate, int channels, const std::stri
 
     // Set expected packet loss percentage (helps with concealment)
     opus_decoder_ctl(opus_decoder_, OPUS_SET_PACKET_LOSS_PCT(5));
-#else
-    opus_decoder_ = nullptr;
 #endif
 
     initialized_ = true;

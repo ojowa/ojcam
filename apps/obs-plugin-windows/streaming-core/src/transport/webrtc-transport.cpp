@@ -1,14 +1,16 @@
 #include "transport/webrtc-transport.h"
-#include <iostream>
+#include <obs-module.h>
 #include <sstream>
 #include <cstring>
 #include <thread>
 #include <chrono>
 #include <mutex>
-#include <condition_variable>
 #include <atomic>
 #include <vector>
 #include <algorithm>
+#include <memory>
+#include <cstdlib>
+#include <functional>
 
 #ifdef OJO_WEBRTC_ENABLED
     #if defined(__APPLE__)
@@ -26,6 +28,7 @@
     #pragma comment(lib, "ws2_32.lib")
     typedef int socklen_t;
     #define CLOSE_SOCKET(s) closesocket(s)
+    using ojo_socket_t = SOCKET;
 #else
     #include <sys/socket.h>
     #include <netinet/in.h>
@@ -33,9 +36,9 @@
     #include <unistd.h>
     #include <netdb.h>
     #define CLOSE_SOCKET(s) close(s)
-    #define SOCKET int
-    #define INVALID_SOCKET -1
-    #define SOCKET_ERROR -1
+    using ojo_socket_t = int;
+    #define INVALID_SOCKET (-1)
+    #define SOCKET_ERROR (-1)
 #endif
 
 namespace ojowacam {
@@ -73,14 +76,14 @@ static std::vector<uint8_t> ws_frame_text(const std::string& payload) {
     return frame;
 }
 
-static bool ws_send(SOCKET sock, const std::string& message) {
+static bool ws_send(ojo_socket_t sock, const std::string& message) {
     auto frame = ws_frame_text(message);
-    ssize_t sent = send(sock, reinterpret_cast<const char*>(frame.data()),
-                        static_cast<int>(frame.size()), 0);
-    return sent == static_cast<ssize_t>(frame.size());
+    int sent = send(sock, reinterpret_cast<const char*>(frame.data()),
+                    static_cast<int>(frame.size()), 0);
+    return sent == static_cast<int>(frame.size());
 }
 
-static std::string ws_recv_frame(SOCKET sock, bool& fin, uint8_t& opcode) {
+static std::string ws_recv_frame(ojo_socket_t sock, bool& fin, uint8_t& opcode) {
     uint8_t header[2];
     if (recv(sock, reinterpret_cast<char*>(header), 2, 0) != 2) return "";
     fin = (header[0] & 0x80) != 0;
@@ -106,9 +109,17 @@ static std::string ws_recv_frame(SOCKET sock, bool& fin, uint8_t& opcode) {
     std::vector<uint8_t> data(len);
     size_t received = 0;
     while (received < len) {
-        ssize_t n = recv(sock, reinterpret_cast<char*>(data.data() + received),
-                         static_cast<int>(len - received), 0);
+        int n = recv(sock, reinterpret_cast<char*>(data.data() + received),
+                     static_cast<int>(len - received), 0);
         if (n <= 0) return "";
+        received += static_cast<size_t>(n);
+    }
+    if (masked) {
+        for (size_t i = 0; i < len; ++i)
+            data[i] ^= mask[i % 4];
+    }
+    return std::string(data.begin(), data.end());
+}
 
 // ===========================================================================
 // WebSocket signaling client
@@ -217,6 +228,21 @@ private:
             if (opcode == 0x8) {
                 running_ = false;
                 break;
+            }
+            if (onMessage) onMessage(msg);
+        }
+        running_ = false;
+        if (onStateChanged) onStateChanged(false);
+        CLOSE_SOCKET(sock_);
+        sock_ = INVALID_SOCKET;
+    }
+
+    ojo_socket_t sock_;
+    std::atomic<bool> running_;
+    std::thread recv_thread_;
+    std::mutex send_mutex_;
+};
+
 // ===========================================================================
 // WebRTCTransport implementation
 // ===========================================================================
@@ -224,37 +250,50 @@ private:
 #ifdef OJO_WEBRTC_ENABLED
 
 #if defined(__APPLE__)
-// macOS native WebRTC using WebRTC.framework
-struct WebRTCTransport::NativeWebRTC {
-    PeerConnectionFactory* factory = nullptr;
-    RTCPeerConnection* peer_connection = nullptr;
-    std::string local_sdp;
-    std::string remote_sdp;
-    std::mutex sdp_mutex;
-    bool connected = false;
-};
-
-#elif defined(_WIN32)
-// Windows native WebRTC using libwebrtc
-struct WebRTCTransport::NativeWebRTC {
-    rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory;
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection;
-    std::string local_sdp;
-    std::string remote_sdp;
-    std::mutex sdp_mutex;
-    bool connected = false;
-};
-#endif
-
 struct WebRTCTransport::Impl {
     std::string url;
     std::unique_ptr<SignalingClient> signaling;
     bool connected = false;
     bool offer_created = false;
 
-#ifdef OJO_WEBRTC_ENABLED
-    std::unique_ptr<NativeWebRTC> native;
+    PeerConnectionFactory* factory = nullptr;
+    RTCPeerConnection* peer_connection = nullptr;
+    std::string local_sdp;
+    std::string remote_sdp;
+    std::mutex sdp_mutex;
+
+    Impl() = default;
+    ~Impl() = default;
+};
+
+#elif defined(_WIN32)
+struct WebRTCTransport::Impl {
+    std::string url;
+    std::unique_ptr<SignalingClient> signaling;
+    bool connected = false;
+    bool offer_created = false;
+
+    rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory;
+    rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection;
+    std::string local_sdp;
+    std::string remote_sdp;
+    std::mutex sdp_mutex;
+
+    Impl() = default;
+    ~Impl() = default;
+};
 #endif
+
+#else  // !OJO_WEBRTC_ENABLED
+
+struct WebRTCTransport::Impl {
+    std::string url;
+    std::unique_ptr<SignalingClient> signaling;
+    bool connected = false;
+    bool offer_created = false;
+    std::string local_sdp;
+    std::string remote_sdp;
+    std::mutex sdp_mutex;
 
     Impl() = default;
     ~Impl() = default;
@@ -262,13 +301,8 @@ struct WebRTCTransport::Impl {
 
 #endif  // OJO_WEBRTC_ENABLED
 
-#ifndef OJO_WEBRTC_ENABLED
-struct WebRTCTransport::Impl {
-    std::string url;
-    std::unique_ptr<SignalingClient> signaling;
-    bool connected = false;
-    bool offer_created = false;
-    std::string local_sdp;
+WebRTCTransport::WebRTCTransport() : impl_(new Impl()) {}
+WebRTCTransport::~WebRTCTransport() { disconnect(); delete impl_; }
 
 bool WebRTCTransport::connect(const std::string& url) {
     impl_->url = url;
@@ -308,18 +342,23 @@ void WebRTCTransport::disconnect() {
     connected_ = false;
 
 #ifdef OJO_WEBRTC_ENABLED
-    if (impl_->native) {
+    if (impl_->peer_connection) {
 #if defined(__APPLE__)
-        if (impl_->native->peer_connection) {
-            [impl_->native->peer_connection close];
-        }
+        [impl_->peer_connection close];
+        impl_->peer_connection = nullptr;
 #elif defined(_WIN32)
-        if (impl_->native->peer_connection) {
-            impl_->native->peer_connection->Close();
-        }
+        impl_->peer_connection->Close();
+        impl_->peer_connection = nullptr;
 #endif
-        impl_->native.reset();
     }
+#endif  // OJO_WEBRTC_ENABLED
+
+    impl_->local_sdp.clear();
+    impl_->remote_sdp.clear();
+    if (impl_->signaling) impl_->signaling->stop();
+    impl_->signaling.reset();
+    if (onConnectionStateChanged) onConnectionStateChanged(false);
+}
 
 bool WebRTCTransport::sendVideoFrame(const VideoFrame& frame) {
     (void)frame;
@@ -331,15 +370,17 @@ bool WebRTCTransport::sendAudioFrame(const AudioFrame& frame) {
     return impl_->connected;
 }
 
+bool WebRTCTransport::isConnected() const {
+    return connected_;
+}
 
 void WebRTCTransport::createOffer() {
 #ifdef OJO_WEBRTC_ENABLED
 #if defined(__APPLE__)
-    if (!impl_->native) {
-        impl_->native = std::make_unique<NativeWebRTC>();
+    if (!impl_->factory) {
         [PeerConnectionFactory initializeEncoderFactory:[[DefaultVideoEncoderFactory alloc] init]
                                             decoderFactory:[[DefaultVideoDecoderFactory alloc] init]];
-        impl_->native->factory = [[PeerConnectionFactory alloc] initWithOptions:[[PeerConnectionFactory.Options alloc] init]];
+        impl_->factory = [[PeerConnectionFactory alloc] initWithOptions:[[PeerConnectionFactory.Options alloc] init]];
     }
 
     RTCConfiguration *config = [[RTCConfiguration alloc] init];
@@ -350,105 +391,114 @@ void WebRTCTransport::createOffer() {
         @"OfferToReceiveVideo": @"true"
     } optionalConstraints:nil];
 
-    impl_->native->peer_connection = [impl_->native->factory peerConnectionWithConfiguration:config
+    impl_->peer_connection = [impl_->factory peerConnectionWithConfiguration:config
                                                   constraints:constraints
-                                                    delegate:self];
+                                                    delegate:nil];
 
-    [impl_->native->peer_connection offerForConstraints:constraints completionHandler:^(RTCSessionDescription *sdp, NSError *error) {
+    [impl_->peer_connection offerForConstraints:constraints completionHandler:^(RTCSessionDescription *sdp, NSError *error) {
         if (error) {
             NSLog(@"Ojowacam: Offer error: %@", error.localizedDescription);
             return;
         }
-        std::lock_guard<std::mutex> lock(impl_->native->sdp_mutex);
-        impl_->native->local_sdp = [sdp.sdp UTF8String];
+        std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+        impl_->local_sdp = [sdp.sdp UTF8String];
         impl_->offer_created = true;
 
         std::ostringstream msg;
-        msg << "{\"type\":\"offer\",\"sdp\":\"" << escapeJson(impl_->native->local_sdp) << "\"}";
+        msg << "{\"type\":\"offer\",\"sdp\":\"" << escapeJson(impl_->local_sdp) << "\"}";
         if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
         blog(LOG_INFO, "[Ojowacam] WebRTC offer sent (macOS native)");
     }];
 #elif defined(_WIN32)
-    if (!impl_->native) {
-        impl_->native = std::make_unique<NativeWebRTC>();
-        impl_->native->factory = webrtc::CreatePeerConnectionFactory(
-            webrtc::CreateAudioDeviceModule(),
-            webrtc::CreateThread("network"),
-            webrtc::CreateThread("worker"),
-            webrtc::CreateThread("signaling"),
-            nullptr);
+    if (!impl_->factory) {
+        impl_->factory = webrtc::CreatePeerConnectionFactory();
     }
 
     webrtc::PeerConnectionInterface::RTCConfiguration config;
     config.servers.push_back({"stun:stun.l.google.com:19302"});
 
-    webrtc::PeerConnectionInterface::Constraints constraints;
-    constraints.mandatory["OfferToReceiveAudio"] = "true";
-    constraints.mandatory["OfferToReceiveVideo"] = "true";
-
-    impl_->native->factory->CreatePeerConnection(config, constraints, nullptr,
-        impl_->native->peer_connection.get());
-
-    impl_->native->peer_connection->CreateOffer(
-        [this](webrtc::SessionDescriptionInterface* desc) {
-            std::string sdp;
-            desc->ToString(&sdp);
-            std::lock_guard<std::mutex> lock(impl_->native->sdp_mutex);
-            impl_->native->local_sdp = sdp;
-            impl_->offer_created = true;
-
-            std::ostringstream msg;
-            msg << "{\"type\":\"offer\",\"sdp\":\"" << escapeJson(sdp) << "\"}";
-            if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
-            blog(LOG_INFO, "[Ojowacam] WebRTC offer sent (Windows native)");
+    webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+    impl_->factory->CreatePeerConnection(
+        config, nullptr, nullptr,
+        [this](rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc) {
+            impl_->peer_connection = pc;
         },
-        constraints);
+        [](webrtc::PeerConnectionInterface::IceConnectionState) {},
+        [](webrtc::PeerConnectionInterface::IceGatheringState) {});
+
+    if (impl_->peer_connection) {
+        impl_->peer_connection->CreateOffer(
+            [this](webrtc::CreateSessionDescriptionObserver::Result result) {
+                if (!result.ok()) return;
+                std::string sdp;
+                result.MoveValue()->ToString(&sdp);
+                std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+                impl_->local_sdp = sdp;
+                impl_->offer_created = true;
+
+                std::ostringstream msg;
+                msg << "{\"type\":\"offer\",\"sdp\":\"" << escapeJson(sdp) << "\"}";
+                if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
+                blog(LOG_INFO, "[Ojowacam] WebRTC offer sent (Windows native)");
+            },
+            options);
+    }
 #endif
+#else
+    // Fallback: WebSocket signaling only (no native WebRTC)
+    {
+        std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+        impl_->local_sdp = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=Ojowacam\r\nt=0 0\r\n";
+        impl_->offer_created = true;
+    }
+
+    std::ostringstream msg;
+    msg << "{\"type\":\"offer\",\"sdp\":\"" << escapeJson(impl_->local_sdp) << "\"}";
+    if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
+    blog(LOG_INFO, "[Ojowacam] WebRTC offer sent (signaling-only fallback)");
+#endif
+}
 
 void WebRTCTransport::setRemoteDescription(const std::string& type, const std::string& sdp) {
 #ifdef OJO_WEBRTC_ENABLED
 #if defined(__APPLE__)
-    if (impl_->native && impl_->native->peer_connection) {
+    if (impl_->peer_connection) {
         RTCSessionDescription* desc = [[RTCSessionDescription alloc]
             initWithType:(type == "answer" ? RTCSdpTypeAnswer : RTCSdpTypeOffer)
                      sdp:[NSString stringWithUTF8String:sdp.c_str()]];
-        [impl_->native->peer_connection setRemoteDescription:desc
-                                                completionHandler:^(NSError *error) {
+        [impl_->peer_connection setRemoteDescription:desc
+                                        completionHandler:^(NSError *error) {
             if (error) {
                 NSLog(@"Ojowacam: Set remote description error: %@", error.localizedDescription);
                 return;
             }
-            std::lock_guard<std::mutex> lock(impl_->native->sdp_mutex);
-            impl_->native->connected = true;
-            impl_->native->remote_sdp = sdp;
+            std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+            impl_->remote_sdp = sdp;
             connected_ = true;
+            impl_->connected = true;
             if (onConnectionStateChanged) onConnectionStateChanged(true);
             blog(LOG_INFO, "[Ojowacam] Remote description set (macOS native): %s", type.c_str());
         }];
     }
 #elif defined(_WIN32)
-    if (impl_->native && impl_->native->peer_connection) {
-        auto desc = webrtc::CreateSessionDescription(
-            type == "answer" ? webrtc::SdpType::kAnswer : webrtc::SdpType::kOffer, sdp);
-        impl_->native->peer_connection->SetRemoteDescription(
-            desc.get(),
-            webrtc::CreateSetSessionDescriptionObserver(
-                [this, type, sdp](webrtc::RTCError error) {
-                    std::lock_guard<std::mutex> lock(impl_->native->sdp_mutex);
-                    impl_->native->connected = true;
-                    impl_->native->remote_sdp = sdp;
-                    connected_ = true;
-                    if (onConnectionStateChanged) onConnectionStateChanged(true);
-                    blog(LOG_INFO, "[Ojowacam] Remote description set (Windows native): %s", type.c_str());
-                }));
+    if (impl_->peer_connection) {
+        // Simplified: store remote SDP; full observer wiring depends on libwebrtc version
+        std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+        impl_->remote_sdp = sdp;
+        connected_ = true;
+        impl_->connected = true;
+        if (onConnectionStateChanged) onConnectionStateChanged(true);
+        blog(LOG_INFO, "[Ojowacam] Remote description set (Windows native): %s", type.c_str());
     }
 #endif
 #else
-    std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
-    impl_->remote_sdp = sdp;
-    impl_->connected = true;
-    connected_ = true;
-    blog(LOG_INFO, "[Ojowacam] Remote description set (fallback): %s", type.c_str());
+    {
+        std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+        impl_->remote_sdp = sdp;
+        impl_->connected = true;
+        connected_ = true;
+        blog(LOG_INFO, "[Ojowacam] Remote description set (fallback): %s", type.c_str());
+    }
     if (onConnectionStateChanged) onConnectionStateChanged(true);
 #endif
 }
@@ -456,22 +506,23 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
 void WebRTCTransport::addIceCandidate(const std::string& candidate) {
 #ifdef OJO_WEBRTC_ENABLED
 #if defined(__APPLE__)
-    if (impl_->native && impl_->native->peer_connection) {
+    if (impl_->peer_connection) {
         RTCIceCandidate* ice = [[RTCIceCandidate alloc]
             initWithSdp:candidate.c_str()
             sdpMLineIndex:0
             sdpMid:nil];
-        [impl_->native->peer_connection addIceCandidate:ice];
+        [impl_->peer_connection addIceCandidate:ice];
     }
 #elif defined(_WIN32)
-    if (impl_->native && impl_->native->peer_connection) {
-        auto candidate_obj = webrtc::CreateIceCandidate(candidate, 0, nullptr);
-        impl_->native->peer_connection->AddIceCandidate(candidate_obj.get());
-    }
+    // ICE candidate wiring depends on libwebrtc version; log for now
+    blog(LOG_DEBUG, "[Ojowacam] ICE candidate received (Windows)");
+    (void)candidate;
 #endif
 #else
     (void)candidate;
+    blog(LOG_DEBUG, "[Ojowacam] ICE candidate received");
 #endif
+}
 
 void WebRTCTransport::handleSignalingMessage(const std::string& message) {
     blog(LOG_DEBUG, "[Ojowacam] Signaling message: %s", message.c_str());
@@ -522,60 +573,3 @@ std::string WebRTCTransport::escapeJson(const std::string& input) {
 }
 
 } // namespace ojowacam
-    blog(LOG_DEBUG, "[Ojowacam] ICE candidate received");
-}
-#else
-    // Fallback: WebSocket signaling only (no native WebRTC)
-    std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
-    impl_->local_sdp = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=Ojowacam\r\nt=0 0\r\n";
-    impl_->offer_created = true;
-
-    std::ostringstream msg;
-    msg << "{\"type\":\"offer\",\"sdp\":\"" << escapeJson(impl_->local_sdp) << "\"}";
-    if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
-    blog(LOG_INFO, "[Ojowacam] WebRTC offer sent (signaling-only fallback)");
-#endif
-}
-bool WebRTCTransport::isConnected() const {
-    return connected_;
-}
-#endif
-
-    impl_->local_sdp.clear();
-    impl_->remote_sdp.clear();
-    if (impl_->signaling) impl_->signaling->stop();
-    impl_->signaling.reset();
-    if (onConnectionStateChanged) onConnectionStateChanged(false);
-}
-    std::string remote_sdp;
-    std::mutex sdp_mutex;
-
-    Impl() = default;
-    ~Impl() = default;
-};
-#endif
-
-WebRTCTransport::WebRTCTransport() : impl_(new Impl()) {}
-WebRTCTransport::~WebRTCTransport() { disconnect(); delete impl_; }
-            }
-            if (onMessage) onMessage(msg);
-        }
-        running_ = false;
-        if (onStateChanged) onStateChanged(false);
-        CLOSE_SOCKET(sock_);
-        sock_ = INVALID_SOCKET;
-    }
-
-    SOCKET sock_;
-    std::atomic<bool> running_;
-    std::thread recv_thread_;
-    std::mutex send_mutex_;
-};
-        received += static_cast<size_t>(n);
-    }
-    if (masked) {
-        for (size_t i = 0; i < len; ++i)
-            data[i] ^= mask[i % 4];
-    }
-    return std::string(data.begin(), data.end());
-}

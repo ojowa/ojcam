@@ -10,7 +10,6 @@
  * verifiable identity that the desktop receiver can authenticate.
  */
 
-import { Platform } from 'react-native';
 
 // ---------------------------------------------------------------------------
 // Platform storage adapter
@@ -94,6 +93,11 @@ function simpleHash(data: ArrayBuffer): Uint8Array {
   const hash = new Uint8Array(32);
   for (let i = 0; i < bytes.length; i++) {
     hash[i % 32] ^= bytes[i];
+    hash[i % 32] = (hash[i % 32] * 31 + bytes[i]) & 0xff;
+  }
+  return hash;
+}
+
 // ---------------------------------------------------------------------------
 // DeviceIdentity class
 // ---------------------------------------------------------------------------
@@ -337,10 +341,6 @@ export class DeviceIdentity {
 }
 
 export const deviceIdentity = DeviceIdentity.getInstance();
-    hash[i % 32] = (hash[i % 32] * 31 + bytes[i]) & 0xff;
-  }
-  return hash;
-}
 
 function arrayBufferToBase64Url(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -364,3 +364,7 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
   }
   return bytes.buffer;
 }
+
+
+
+

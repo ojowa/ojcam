@@ -1,6 +1,7 @@
 #include "decoder/video-decoder.h"
 #include <cstring>
 #include <algorithm>
+#include <obs-module.h>
 
 #ifdef OJO_FFMPEG_ENABLED
     extern "C" {
@@ -87,8 +88,23 @@ std::vector<std::vector<uint8_t>> H264VideoDecoder::splitNalUnits(
         else if (data[start] == 0 && data[start+1] == 0 && data[start+2] == 1)
             payload_start = start + 3;
 
-        std::vector<uint8_t> nal(data.begin() + payload_start,
-                                 data.begin() + next);
+        if (payload_start < next) {
+            std::vector<uint8_t> nal(data.begin() + payload_start,
+                                     data.begin() + next);
+            nal_units.push_back(std::move(nal));
+        }
+        i = next;
+    }
+    return nal_units;
+}
+
+bool H264VideoDecoder::parseNalHeader(const uint8_t* data, size_t size,
+                                       int& nal_type, int& nal_ref_idc) const {
+    if (size < 1) return false;
+    nal_ref_idc = (data[0] >> 5) & 0x3;
+    nal_type = data[0] & 0x1F;
+    return true;
+}
 
 // ===========================================================================
 // SPS parsing – extract width/height using Exp-Golomb
@@ -135,7 +151,7 @@ bool H264VideoDecoder::parseSps(const std::vector<uint8_t>& sps, int& width, int
         }
     }
 
-    reader.readUe() + 4;  // log2_max_frame_num
+    reader.readUe();  // log2_max_frame_num
     unsigned int poc_type = reader.readUe();
     if (poc_type == 0) {
         reader.readUe();
@@ -160,6 +176,15 @@ bool H264VideoDecoder::parseSps(const std::vector<uint8_t>& sps, int& width, int
         unsigned int ct = reader.readUe();
         unsigned int cb = reader.readUe();
         width = static_cast<int>(pic_w * 16) - static_cast<int>((cl + cr) * 4);
+        height = static_cast<int>(pic_h * 16 * (2 - frame_mbs_only)) -
+                 static_cast<int>((ct + cb) * 4);
+    } else {
+        width = static_cast<int>(pic_w * 16);
+        height = static_cast<int>(pic_h * 16 * (2 - frame_mbs_only));
+    }
+    return width > 0 && height > 0;
+}
+
 // ===========================================================================
 // Software H264 decoder public API
 // ===========================================================================
@@ -172,7 +197,7 @@ void H264VideoDecoder::emitFrame() {
     frame.width = width_;
     frame.height = height_;
     frame.timestamp_us = frame_timestamp_;
-    frame.format = VideoPixelFormat::YUV420;  // H264 typically outputs YUV420
+    frame.format = VideoPixelFormat::YUV420;
     onFrameDecoded(frame);
 }
 
@@ -194,7 +219,6 @@ bool H264VideoDecoder::decode(const std::vector<uint8_t>& encoded_data,
 
     frame_timestamp_ = timestamp_us;
     auto nal_units = splitNalUnits(encoded_data);
-    bool emitted_frame = false;
 
     for (const auto& nal : nal_units) {
         if (nal.empty()) continue;
@@ -218,7 +242,6 @@ bool H264VideoDecoder::decode(const std::vector<uint8_t>& encoded_data,
                 if (!frame_buffer_.empty()) {
                     emitFrame();
                     frame_buffer_.clear();
-                    emitted_frame = true;
                 }
                 waiting_for_idr_ = false;
                 frame_buffer_.insert(frame_buffer_.end(), nal.begin(), nal.end());
@@ -247,8 +270,25 @@ bool H264VideoDecoder::decode(const std::vector<uint8_t>& encoded_data,
     if (!frame_buffer_.empty() && !waiting_for_idr_) {
         emitFrame();
         frame_buffer_.clear();
-        emitted_frame = true;
+        return true;
     }
+    return false;
+}
+
+void H264VideoDecoder::release() {
+    initialized_ = false;
+    width_ = 0;
+    height_ = 0;
+    frame_buffer_.clear();
+    sps_.clear();
+    pps_.clear();
+    waiting_for_idr_ = true;
+}
+
+bool H264VideoDecoder::isInitialized() const {
+    return initialized_;
+}
+
 // ===========================================================================
 // FFmpeg H264 hardware/software decoder implementation
 // ===========================================================================
@@ -257,7 +297,7 @@ bool H264VideoDecoder::decode(const std::vector<uint8_t>& encoded_data,
 
 struct FFmpegH264Decoder::Impl {
     AVCodecContext* codec_ctx = nullptr;
-    AVCodec* codec = nullptr;
+    const AVCodec* codec = nullptr;
     AVFrame* frame = nullptr;
     AVPacket* packet = nullptr;
     AVBufferRef* hw_device_ctx = nullptr;
@@ -273,8 +313,13 @@ struct FFmpegH264Decoder::Impl {
         if (codec_ctx) avcodec_free_context(&codec_ctx);
         if (hw_device_ctx) av_buffer_unref(&hw_device_ctx);
     }
+};
+
+FFmpegH264Decoder::FFmpegH264Decoder() : impl_(new Impl()) {}
+FFmpegH264Decoder::~FFmpegH264Decoder() { release(); delete impl_; }
 
 bool FFmpegH264Decoder::initialize(int width, int height, const std::string& codec) {
+    (void)codec;
     if (impl_->initialized) return true;
 
     impl_->use_hardware = false;
@@ -341,14 +386,28 @@ bool FFmpegH264Decoder::initialize(int width, int height, const std::string& cod
     impl_->frame = av_frame_alloc();
     impl_->packet = av_packet_alloc();
 
+    if (!impl_->frame || !impl_->packet) {
+        blog(LOG_ERROR, "[Ojowacam] FFmpeg: Could not allocate frame/packet");
+        return false;
+    }
+
+    impl_->width = width;
+    impl_->height = height;
+    impl_->initialized = true;
+
+    blog(LOG_INFO, "[Ojowacam] FFmpeg H264 decoder initialized (%s, %dx%d)",
+         impl_->use_hardware ? "hardware" : "software", width, height);
+    return true;
+}
 
 bool FFmpegH264Decoder::decode(const std::vector<uint8_t>& encoded_data,
                                 int64_t timestamp_us) {
     if (!impl_->initialized || !impl_->codec_ctx) return false;
 
     AVPacket* pkt = av_packet_alloc();
-    av_packet_from_data(pkt, const_cast<uint8_t*>(encoded_data.data()),
-                        static_cast<int>(encoded_data.size()));
+    if (!pkt) return false;
+    pkt->data = const_cast<uint8_t*>(encoded_data.data());
+    pkt->size = static_cast<int>(encoded_data.size());
 
     int ret = avcodec_send_packet(impl_->codec_ctx, pkt);
     av_packet_free(&pkt);
@@ -356,7 +415,7 @@ bool FFmpegH264Decoder::decode(const std::vector<uint8_t>& encoded_data,
     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
         // Will try receiving frames below
     } else if (ret < 0) {
-        blog(LOG_ERROR, "[Ojowacam] FFmpeg: Error sending packet: %s", av_err2str(ret));
+        blog(LOG_ERROR, "[Ojowacam] FFmpeg: Error sending packet: %d", ret);
         return false;
     }
 
@@ -364,7 +423,7 @@ bool FFmpegH264Decoder::decode(const std::vector<uint8_t>& encoded_data,
         ret = avcodec_receive_frame(impl_->codec_ctx, impl_->frame);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
         if (ret < 0) {
-            blog(LOG_ERROR, "[Ojowacam] FFmpeg: Error during decoding: %s", av_err2str(ret));
+            blog(LOG_ERROR, "[Ojowacam] FFmpeg: Error during decoding: %d", ret);
             return false;
         }
 
@@ -373,10 +432,11 @@ bool FFmpegH264Decoder::decode(const std::vector<uint8_t>& encoded_data,
 
         if (impl_->use_hardware) {
             tmp_frame = av_frame_alloc();
-            if (av_hwframe_transfer_data(tmp_frame, impl_->frame, 0) >= 0) {
+            if (tmp_frame && av_hwframe_transfer_data(tmp_frame, impl_->frame, 0) >= 0) {
                 output_frame = tmp_frame;
-            } else {
+            } else if (tmp_frame) {
                 av_frame_free(&tmp_frame);
+                tmp_frame = nullptr;
             }
         }
 
@@ -384,17 +444,29 @@ bool FFmpegH264Decoder::decode(const std::vector<uint8_t>& encoded_data,
         out_frame.width = output_frame->width;
         out_frame.height = output_frame->height;
         out_frame.timestamp_us = timestamp_us;
-        out_frame.format = impl_->use_hardware
-            ? VideoPixelFormat::YUV420
-            : VideoPixelFormat::RGBA;
+        out_frame.format = VideoPixelFormat::YUV420;
 
-        size_t data_size = static_cast<size_t>(output_frame->width) *
-                          output_frame->height * 4;
-        out_frame.data.resize(data_size);
+        if (output_frame->data[0] && output_frame->linesize[0] > 0) {
+            size_t row_size = static_cast<size_t>(output_frame->width) * 4;
+            size_t src_stride = static_cast<size_t>(output_frame->linesize[0]);
+            out_frame.data.resize(row_size * static_cast<size_t>(output_frame->height));
+            for (int row = 0; row < output_frame->height; ++row) {
+                std::memcpy(out_frame.data.data() + row * row_size,
+                            output_frame->data[0] + row * src_stride,
+                            std::min(row_size, src_stride));
+            }
+        }
 
-        if (output_frame->data[0]) {
-            std::memcpy(out_frame.data.data(), output_frame->data[0],
-                       std::min(data_size, static_cast<size_t>(
+        if (onFrameDecoded) {
+            onFrameDecoded(out_frame);
+        }
+
+        if (tmp_frame) av_frame_free(&tmp_frame);
+        av_frame_unref(impl_->frame);
+    }
+
+    return true;
+}
 
 void FFmpegH264Decoder::release() {
     if (impl_) {
@@ -433,71 +505,3 @@ bool HardwareVideoDecoder::IsHardwareDecodingAvailable() {
 }
 
 } // namespace ojowacam
-                           output_frame->linesize[0] * output_frame->height)));
-        }
-
-        if (impl_->onFrameDecoded) {
-            impl_->onFrameDecoded(out_frame);
-        }
-
-        if (tmp_frame) av_frame_free(&tmp_frame);
-        av_frame_unref(impl_->frame);
-    }
-
-    return true;
-}
-    if (!impl_->frame || !impl_->packet) {
-        blog(LOG_ERROR, "[Ojowacam] FFmpeg: Could not allocate frame/packet");
-        return false;
-    }
-
-    impl_->width = width;
-    impl_->height = height;
-    impl_->initialized = true;
-
-    blog(LOG_INFO, "[Ojowacam] FFmpeg H264 decoder initialized (%s, %dx%d)",
-         impl_->use_hardware ? "hardware" : "software", width, height);
-    return true;
-}
-};
-
-FFmpegH264Decoder::FFmpegH264Decoder() : impl_(new Impl()) {}
-FFmpegH264Decoder::~FFmpegH264Decoder() { release(); delete impl_; }
-
-    return emitted_frame || !frame_buffer_.empty();
-}
-
-void H264VideoDecoder::release() {
-    initialized_ = false;
-    width_ = 0;
-    height_ = 0;
-    frame_buffer_.clear();
-    sps_.clear();
-    pps_.clear();
-    waiting_for_idr_ = true;
-}
-
-bool H264VideoDecoder::isInitialized() const {
-    return initialized_;
-}
-        height = static_cast<int>(pic_h * 16 * (2 - frame_mbs_only)) -
-                 static_cast<int>((ct + cb) * 4);
-    } else {
-        width = static_cast<int>(pic_w * 16);
-        height = static_cast<int>(pic_h * 16 * (2 - frame_mbs_only));
-    }
-    return width > 0 && height > 0;
-}
-        nal_units.push_back(std::move(nal));
-        i = next;
-    }
-    return nal_units;
-}
-
-bool H264VideoDecoder::parseNalHeader(const uint8_t* data, size_t size,
-                                       int& nal_type, int& nal_ref_idc) const {
-    if (size < 1) return false;
-    nal_ref_idc = (data[0] >> 5) & 0x3;
-    nal_type = data[0] & 0x1F;
-    return true;
-}

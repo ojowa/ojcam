@@ -1,474 +1,155 @@
-/**
- * ProtobufCodec.ts
- * 
- * Minimal Protocol Buffers wire-format encoder/decoder.
- * 
- * Supports Varint (wire type 0) and Length-delimited (wire type 2)
- * needed by Ojowacam protocol messages. Provides protobuf-compatible binary
- * encoding without the protobufjs dependency.
- * 
- * Protocol reference: docs/protocols/PROTOCOL.md
- * Message types: src/services/protocol/messageTypes.ts
- */
+import type { DeviceAnnouncement, StartSession, ControlCommand, Capabilities, VideoConfig, AudioConfig, ProtocolMessage } from './messageTypes';
+import { FieldTags, WireType } from './messageTypes';
+export { createDeviceAnnouncement, createStartSession, createControlCommand } from './messageTypes';
+export type { DeviceAnnouncement, StartSession, ControlCommand, Capabilities, VideoConfig, AudioConfig, ProtocolMessage } from './messageTypes';
 
-import {
-  DeviceAnnouncement,
-  StartSession,
-  ControlCommand,
-  Capabilities,
-  VideoConfig,
-  AudioConfig,
-  FieldTags,
-  WireType,
-  ProtocolMessage,
-} from './messageTypes';
-
-// ---------------------------------------------------------------------------
-// Varint encoding/decoding
-// ---------------------------------------------------------------------------
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 export function encodeVarint(value: number): Uint8Array {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('Varint must be a non-negative safe integer');
   const bytes: number[] = [];
-  while (value >= 0x80) {
-    bytes.push((value & 0x7f) | 0x80);
-    value >>>= 7;
-  }
+  while (value >= 0x80) { bytes.push((value % 128) | 0x80); value = Math.floor(value / 128); }
   bytes.push(value);
   return new Uint8Array(bytes);
 }
-
 export function decodeVarint(data: Uint8Array, offset: number): [number, number] {
-  let result = 0;
-  let shift = 0;
-  let i = offset;
-  let byte: number;
-
-  do {
-    byte = data[i];
-    result |= (byte & 0x7f) << shift;
-    shift += 7;
-    i++;
-  } while (byte & 0x80 && i < data.length);
-
-  return [result >>> 0, i - offset];
-
-function encodeCapabilities(caps: Capabilities): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeField(FieldTags.Capabilities_video, WireType.Varint, caps.video ? 1 : 0));
-  parts.push(encodeField(FieldTags.Capabilities_audio, WireType.Varint, caps.audio ? 1 : 0));
-  for (const res of caps.resolutions) {
-    parts.push(encodeField(FieldTags.Capabilities_resolutions, WireType.LengthDelimited, res));
+  let result = 0; let multiplier = 1; let i = offset;
+  while (i < data.length && i - offset < 10) {
+    const byte = data[i++]; result += (byte & 0x7f) * multiplier;
+    if (!Number.isSafeInteger(result)) throw new Error('Varint exceeds safe integer range');
+    if ((byte & 0x80) === 0) return [result, i - offset];
+    multiplier *= 128;
   }
-  for (const fps of caps.frameRates) {
-    parts.push(encodeField(FieldTags.Capabilities_frameRates, WireType.Varint, fps));
-  }
-  return concatUint8Arrays(parts);
+  throw new Error('Truncated or oversized varint');
 }
-
-function encodeVideoConfig(config: VideoConfig): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeField(FieldTags.VideoConfig_resolution, WireType.LengthDelimited, config.resolution));
-  parts.push(encodeField(FieldTags.VideoConfig_fps, WireType.Varint, config.fps));
-  parts.push(encodeField(FieldTags.VideoConfig_codec, WireType.LengthDelimited, config.codec));
-  parts.push(encodeField(FieldTags.VideoConfig_bitrate, WireType.Varint, config.bitrate));
-  return concatUint8Arrays(parts);
+function concat(parts: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let offset = 0;
+  for (const part of parts) { result.set(part, offset); offset += part.length; }
+  return result;
 }
-
-function encodeAudioConfig(config: AudioConfig): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeField(FieldTags.AudioConfig_codec, WireType.LengthDelimited, config.codec));
-  parts.push(encodeField(FieldTags.AudioConfig_sampleRate, WireType.Varint, config.sampleRate));
-  parts.push(encodeField(FieldTags.AudioConfig_channels, WireType.Varint, config.channels));
-  return concatUint8Arrays(parts);
+function encodeBytes(value: Uint8Array): Uint8Array { return concat([encodeVarint(value.length), value]); }
+function encodeValue(value: number | string | Uint8Array, wire: number): Uint8Array {
+  if (wire === WireType.Varint) return encodeVarint(value as number);
+  if (wire === WireType.LengthDelimited) return encodeBytes(typeof value === 'string' ? encoder.encode(value) : value as Uint8Array);
+  throw new Error(`Unsupported wire type for encoding: ${wire}`);
 }
-
-function encodeDeviceAnnouncement(msg: DeviceAnnouncement): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeField(FieldTags.DeviceAnnouncement_deviceId, WireType.LengthDelimited, msg.deviceId));
-  parts.push(encodeField(FieldTags.DeviceAnnouncement_deviceName, WireType.LengthDelimited, msg.deviceName));
-  const capsBytes = encodeCapabilities(msg.capabilities);
-  parts.push(encodeField(FieldTags.DeviceAnnouncement_capabilities, WireType.LengthDelimited, capsBytes));
-  return concatUint8Arrays(parts);
+function encodeField(tag: number, wire: number, value: number | string | Uint8Array): Uint8Array {
+  return concat([encodeVarint((tag << 3) | wire), encodeValue(value, wire)]);
 }
-
-function encodeStartSession(msg: StartSession): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeField(FieldTags.StartSession_sessionId, WireType.LengthDelimited, msg.sessionId));
-  const videoBytes = encodeVideoConfig(msg.video);
-  parts.push(encodeField(FieldTags.StartSession_video, WireType.LengthDelimited, videoBytes));
-  const audioBytes = encodeAudioConfig(msg.audio);
-  parts.push(encodeField(FieldTags.StartSession_audio, WireType.LengthDelimited, audioBytes));
-  return concatUint8Arrays(parts);
+function encodeCapabilities(c: Capabilities): Uint8Array {
+  return concat([
+    encodeField(FieldTags.Capabilities_video, WireType.Varint, c.video ? 1 : 0),
+    encodeField(FieldTags.Capabilities_audio, WireType.Varint, c.audio ? 1 : 0),
+    ...c.resolutions.map(v => encodeField(FieldTags.Capabilities_resolutions, WireType.LengthDelimited, v)),
+    ...c.frameRates.map(v => encodeField(FieldTags.Capabilities_frameRates, WireType.Varint, v)),
+  ]);
 }
-
-
-function decodeVarintValue(data: Uint8Array, offset: number): [number, number] {
-  return decodeVarint(data, offset);
+function encodeVideo(c: VideoConfig): Uint8Array { return concat([
+  encodeField(FieldTags.VideoConfig_resolution, WireType.LengthDelimited, c.resolution),
+  encodeField(FieldTags.VideoConfig_fps, WireType.Varint, c.fps),
+  encodeField(FieldTags.VideoConfig_codec, WireType.LengthDelimited, c.codec),
+  encodeField(FieldTags.VideoConfig_bitrate, WireType.Varint, c.bitrate),
+]); }
+function encodeAudio(c: AudioConfig): Uint8Array { return concat([
+  encodeField(FieldTags.AudioConfig_codec, WireType.LengthDelimited, c.codec),
+  encodeField(FieldTags.AudioConfig_sampleRate, WireType.Varint, c.sampleRate),
+  encodeField(FieldTags.AudioConfig_channels, WireType.Varint, c.channels),
+]); }
+function encodeAnnouncement(m: DeviceAnnouncement): Uint8Array { return concat([
+  encodeField(FieldTags.DeviceAnnouncement_deviceId, WireType.LengthDelimited, m.deviceId),
+  encodeField(FieldTags.DeviceAnnouncement_deviceName, WireType.LengthDelimited, m.deviceName),
+  encodeField(FieldTags.DeviceAnnouncement_capabilities, WireType.LengthDelimited, encodeCapabilities(m.capabilities)),
+]); }
+function encodeStart(m: StartSession): Uint8Array { return concat([
+  encodeField(FieldTags.StartSession_sessionId, WireType.LengthDelimited, m.sessionId),
+  encodeField(FieldTags.StartSession_video, WireType.LengthDelimited, encodeVideo(m.video)),
+  encodeField(FieldTags.StartSession_audio, WireType.LengthDelimited, encodeAudio(m.audio)),
+]); }
+function encodeControl(m: ControlCommand): Uint8Array {
+  const parts = [encodeField(FieldTags.ControlCommand_type, WireType.LengthDelimited, m.command)];
+  if (m.zoom !== undefined) parts.push(encodeField(FieldTags.ControlCommand_zoom, WireType.Varint, m.zoom));
+  if (m.focus !== undefined) parts.push(encodeField(FieldTags.ControlCommand_focus, WireType.Varint, m.focus ? 1 : 0));
+  if (m.torch !== undefined) parts.push(encodeField(FieldTags.ControlCommand_torch, WireType.Varint, m.torch ? 1 : 0));
+  if (m.orientation !== undefined) parts.push(encodeField(FieldTags.ControlCommand_orientation, WireType.LengthDelimited, m.orientation));
+  return concat(parts);
 }
-
-function decodeString(data: Uint8Array, offset: number): [string, number] {
-  const [length, bytesRead] = decodeVarint(data, offset);
-  const start = offset + bytesRead;
-  const decoder = new TextDecoder();
-  const str = decoder.decode(data.slice(start, start + length));
-  return [str, bytesRead + length];
-}
-
-function decodeBytes(data: Uint8Array, offset: number): [Uint8Array, number] {
-  const [length, bytesRead] = decodeVarint(data, offset);
-  const start = offset + bytesRead;
-  const bytes = data.slice(start, start + length);
-  return [bytes, bytesRead + length];
-}
-
-function decodeField(data: Uint8Array, offset: number): [number, number, unknown, number] {
-  const [key, keyBytes] = decodeVarint(data, offset);
-  const fieldNumber = key >>> 3;
-  const wireType = key & 0x7;
-  const valueStart = offset + keyBytes;
-
-  let value: unknown;
-  let valueBytes: number;
-
-  switch (wireType) {
-    case WireType.Varint:
-      [value, valueBytes] = decodeVarint(data, valueStart);
-      break;
-    case WireType.LengthDelimited:
-      [value, valueBytes] = decodeBytes(data, valueStart);
-
-function decodeCapabilities(data: Uint8Array, offset: number, end: number): Capabilities {
-  const caps: Capabilities = {
-    video: false,
-    audio: false,
-    resolutions: [],
-    frameRates: [],
-  };
-
-  while (offset < end) {
-    const [fieldNumber, wireType, value, bytesRead] = decodeField(data, offset);
-    offset += bytesRead;
-
-    switch (fieldNumber) {
-      case FieldTags.Capabilities_video:
-        caps.video = (value as number) === 1;
-        break;
-      case FieldTags.Capabilities_audio:
-        caps.audio = (value as number) === 1;
-        break;
-      case FieldTags.Capabilities_resolutions:
-        caps.resolutions.push(new TextDecoder().decode(value as Uint8Array));
-        break;
-      case FieldTags.Capabilities_frameRates:
-        caps.frameRates.push(value as number);
-        break;
-    }
-  }
-
-  return caps;
-}
-
-function decodeVideoConfig(data: Uint8Array, offset: number, end: number): VideoConfig {
-  const config: VideoConfig = {
-    resolution: '',
-    fps: 30,
-    codec: 'H264',
-    bitrate: 0,
-  };
-
-  while (offset < end) {
-    const [fieldNumber, wireType, value, bytesRead] = decodeField(data, offset);
-    offset += bytesRead;
-
-    switch (fieldNumber) {
-      case FieldTags.VideoConfig_resolution:
-        config.resolution = new TextDecoder().decode(value as Uint8Array);
-        break;
-      case FieldTags.VideoConfig_fps:
-        config.fps = value as number;
-        break;
-      case FieldTags.VideoConfig_codec:
-        config.codec = new TextDecoder().decode(value as Uint8Array);
-        break;
-      case FieldTags.VideoConfig_bitrate:
-        config.bitrate = value as number;
-        break;
-    }
-  }
-
-  return config;
-
-function decodeAudioConfig(data: Uint8Array, offset: number, end: number): AudioConfig {
-  const config: AudioConfig = {
-    codec: 'OPUS',
-    sampleRate: 48000,
-    channels: 2,
-  };
-
-  while (offset < end) {
-    const [fieldNumber, wireType, value, bytesRead] = decodeField(data, offset);
-    offset += bytesRead;
-
-    switch (fieldNumber) {
-      case FieldTags.AudioConfig_codec:
-        config.codec = new TextDecoder().decode(value as Uint8Array);
-        break;
-      case FieldTags.AudioConfig_sampleRate:
-        config.sampleRate = value as number;
-        break;
-      case FieldTags.AudioConfig_channels:
-        config.channels = value as number;
-        break;
-    }
-  }
-
-  return config;
-}
-
-function decodeDeviceAnnouncement(data: Uint8Array): DeviceAnnouncement {
-  let deviceId = '';
-  let deviceName = '';
-  let capabilities: Capabilities = {
-    video: false,
-    audio: false,
-    resolutions: [],
-    frameRates: [],
-  };
-
-  let offset = 0;
-  while (offset < data.length) {
-    const [fieldNumber, wireType, value, bytesRead] = decodeField(data, offset);
-    offset += bytesRead;
-
-    switch (fieldNumber) {
-      case FieldTags.DeviceAnnouncement_deviceId:
-        deviceId = new TextDecoder().decode(value as Uint8Array);
-        break;
-      case FieldTags.DeviceAnnouncement_deviceName:
-        deviceName = new TextDecoder().decode(value as Uint8Array);
-        break;
-      case FieldTags.DeviceAnnouncement_capabilities:
-        capabilities = decodeCapabilities(
-          value as Uint8Array,
-          0,
-          (value as Uint8Array).length
-        );
-        break;
-    }
-  }
-
-  return {
-    type: 'DEVICE_ANNOUNCEMENT',
-    deviceId,
-    deviceName,
-    capabilities,
-  };
-}
-
-function decodeStartSession(data: Uint8Array): StartSession {
-  let sessionId = '';
-  let video: VideoConfig = { resolution: '', fps: 30, codec: 'H264', bitrate: 0 };
-  let audio: AudioConfig = { codec: 'OPUS', sampleRate: 48000, channels: 2 };
-
-  let offset = 0;
-  while (offset < data.length) {
-    const [fieldNumber, wireType, value, bytesRead] = decodeField(data, offset);
-    offset += bytesRead;
-
-    switch (fieldNumber) {
-      case FieldTags.StartSession_sessionId:
-        sessionId = new TextDecoder().decode(value as Uint8Array);
-        break;
-      case FieldTags.StartSession_video:
-        video = decodeVideoConfig(value as Uint8Array, 0, (value as Uint8Array).length);
-        break;
-      case FieldTags.StartSession_audio:
-        audio = decodeAudioConfig(value as Uint8Array, 0, (value as Uint8Array).length);
-        break;
-    }
-  }
-
-  return {
-    type: 'START_SESSION',
-    sessionId,
-    video,
-    audio,
-  };
-}
-
-function decodeControlCommand(data: Uint8Array): ControlCommand {
-  const cmd: ControlCommand = {
-    type: 'CONTROL_COMMAND',
-    command: 'orientation',
-  };
-
-  let offset = 0;
-  while (offset < data.length) {
-    const [fieldNumber, wireType, value, bytesRead] = decodeField(data, offset);
-    offset += bytesRead;
-
-    switch (fieldNumber) {
-      case FieldTags.ControlCommand_type:
-        cmd.command = new TextDecoder().decode(value as Uint8Array) as ControlCommand['command'];
-        break;
-      case FieldTags.ControlCommand_zoom:
-        cmd.zoom = value as number;
-        break;
-      case FieldTags.ControlCommand_focus:
-        cmd.focus = (value as number) === 1;
-        break;
-      case FieldTags.ControlCommand_torch:
-        cmd.torch = (value as number) === 1;
-        break;
-      case FieldTags.ControlCommand_orientation:
-        cmd.orientation = new TextDecoder().decode(value as Uint8Array) as ControlCommand['orientation'];
-        break;
-    }
-  }
-
-  return cmd;
-}
-
-export function decodeMessage(data: Uint8Array, expectedType?: string): ProtocolMessage {
-  if (!expectedType && data.length > 0) {
-    const [key] = decodeVarint(data, 0);
-    const fieldNumber = key >>> 3;
-    expectedType = 'DEVICE_ANNOUNCEMENT';
-  }
-
-  switch (expectedType) {
-    case 'DEVICE_ANNOUNCEMENT':
-      return decodeDeviceAnnouncement(data);
-    case 'START_SESSION':
-      return decodeStartSession(data);
-    case 'CONTROL_COMMAND':
-      return decodeControlCommand(data);
-    default:
-      throw new Error(`Unknown or unsupported message type: ${expectedType}`);
+export function encodeMessage(message: ProtocolMessage): Uint8Array {
+  switch (message.type) {
+    case 'DEVICE_ANNOUNCEMENT': return encodeAnnouncement(message);
+    case 'START_SESSION': return encodeStart(message);
+    case 'CONTROL_COMMAND': return encodeControl(message);
   }
 }
-
-export function decodeMessageBase64(
-  base64: string,
-  expectedType?: string
-): ProtocolMessage {
-  const normalized = base64.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return decodeMessage(bytes, expectedType);
-}
-
-}
-
-      break;
-    default:
-      throw new Error(`Unsupported wire type for decoding: ${wireType}`);
-  }
-
-  return [fieldNumber, wireType, value, keyBytes + valueBytes];
-}
-
-function encodeControlCommand(msg: ControlCommand): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeField(FieldTags.ControlCommand_type, WireType.LengthDelimited, msg.command));
-  if (msg.zoom !== undefined) {
-    parts.push(encodeField(FieldTags.ControlCommand_zoom, WireType.Varint, msg.zoom));
-  }
-  if (msg.focus !== undefined) {
-    parts.push(encodeField(FieldTags.ControlCommand_focus, WireType.Varint, msg.focus ? 1 : 0));
-  }
-  if (msg.torch !== undefined) {
-    parts.push(encodeField(FieldTags.ControlCommand_torch, WireType.Varint, msg.torch ? 1 : 0));
-  }
-  if (msg.orientation !== undefined) {
-    parts.push(encodeField(FieldTags.ControlCommand_orientation, WireType.LengthDelimited, msg.orientation));
-  }
-  return concatUint8Arrays(parts);
-}
-
-export function encodeMessage(msg: ProtocolMessage): Uint8Array {
-  switch (msg.type) {
-    case 'DEVICE_ANNOUNCEMENT':
-      return encodeDeviceAnnouncement(msg);
-    case 'START_SESSION':
-      return encodeStartSession(msg);
-    case 'CONTROL_COMMAND':
-      return encodeControlCommand(msg);
-    default:
-      throw new Error(`Unknown message type: ${(msg as { type: string }).type}`);
-  }
-}
-
-export function encodeMessageBase64(msg: ProtocolMessage): string {
-  const bytes = encodeMessage(msg);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
+export function encodeMessageBase64(message: ProtocolMessage): string {
+  let binary = ''; for (const b of encodeMessage(message)) binary += String.fromCharCode(b);
   return btoa(binary);
 }
 
-}
-
-function encodeFieldKey(fieldNumber: number, wireType: number): Uint8Array {
-  return encodeVarint((fieldNumber << 3) | wireType);
-}
-
-function encodeValue(value: unknown, wireType: number): Uint8Array {
-  switch (wireType) {
-    case WireType.Varint:
-      return encodeVarint(typeof value === 'boolean' ? (value ? 1 : 0) : value as number);
-    case WireType.LengthDelimited:
-      if (typeof value === 'string') {
-        return encodeString(value);
-      }
-      if (value instanceof Uint8Array) {
-        return encodeBytes(value);
-      }
-      throw new Error(`Unsupported length-delimited value type: ${typeof value}`);
-    default:
-      throw new Error(`Unsupported wire type for encoding: ${wireType}`);
+type Field = { tag: number; wire: number; value: number | Uint8Array };
+function readField(data: Uint8Array, offset: number): [Field, number] {
+  const [key, keySize] = decodeVarint(data, offset); const tag = Math.floor(key / 8); const wire = key & 7;
+  if (tag === 0) throw new Error('Invalid protobuf field number');
+  let cursor = offset + keySize;
+  if (wire === WireType.Varint) { const [value, size] = decodeVarint(data, cursor); return [{ tag, wire, value }, keySize + size]; }
+  if (wire === WireType.LengthDelimited) {
+    const [length, size] = decodeVarint(data, cursor); cursor += size;
+    if (length > data.length - cursor) throw new Error('Truncated length-delimited field');
+    return [{ tag, wire, value: data.slice(cursor, cursor + length) }, size + keySize + length];
   }
+  let skip = wire === 1 ? 8 : wire === 5 ? 4 : 0;
+  if (!skip) throw new Error(`Unsupported wire type for decoding: ${wire}`);
+  if (cursor + skip > data.length) throw new Error('Truncated fixed-width field');
+  return [{ tag, wire, value: data.slice(cursor, cursor + skip) }, keySize + skip];
 }
-
-function encodeString(value: string): Uint8Array {
-  const encoder = new TextEncoder();
-  const utf8Bytes = encoder.encode(value);
-  const lengthBytes = encodeVarint(utf8Bytes.length);
-  const result = new Uint8Array(lengthBytes.length + utf8Bytes.length);
-  result.set(lengthBytes, 0);
-  result.set(utf8Bytes, lengthBytes.length);
-  return result;
+function fields(data: Uint8Array): Field[] {
+  const out: Field[] = []; let offset = 0;
+  while (offset < data.length) { const [field, count] = readField(data, offset); if (count <= 0) throw new Error('Invalid protobuf field'); out.push(field); offset += count; }
+  return out;
 }
-
-function encodeBytes(value: Uint8Array): Uint8Array {
-  const lengthBytes = encodeVarint(value.length);
-  const result = new Uint8Array(lengthBytes.length + value.length);
-  result.set(lengthBytes, 0);
-  result.set(value, lengthBytes.length);
-  return result;
+function str(f: Field): string { if (!(f.value instanceof Uint8Array)) throw new Error('Expected length-delimited string'); return decoder.decode(f.value); }
+function num(f: Field): number { if (typeof f.value !== 'number') throw new Error('Expected varint'); return f.value; }
+function nested(f: Field): Field[] { if (!(f.value instanceof Uint8Array)) throw new Error('Expected nested message'); return fields(f.value); }
+function last(fs: Field[], tag: number): Field | undefined { return [...fs].reverse().find(f => f.tag === tag); }
+function decodeCapabilities(fs: Field[]): Capabilities {
+  return { video: num(last(fs, FieldTags.Capabilities_video) ?? { tag: 1, wire: 0, value: 0 }) !== 0,
+    audio: num(last(fs, FieldTags.Capabilities_audio) ?? { tag: 2, wire: 0, value: 0 }) !== 0,
+    resolutions: fs.filter(f => f.tag === FieldTags.Capabilities_resolutions).map(str),
+    frameRates: fs.filter(f => f.tag === FieldTags.Capabilities_frameRates).map(num) };
 }
-
-function encodeField(fieldNumber: number, wireType: number, value: unknown): Uint8Array {
-  const key = encodeFieldKey(fieldNumber, wireType);
-  const valueBytes = encodeValue(value, wireType);
-  const result = new Uint8Array(key.length + valueBytes.length);
-  result.set(key, 0);
-  result.set(valueBytes, key.length);
-  return result;
-}
-
-function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((sum, a) => sum + a.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const arr of arrays) {
-    result.set(arr, offset);
-    offset += arr.length;
+function decodeVideo(fs: Field[]): VideoConfig { return {
+  resolution: last(fs, FieldTags.VideoConfig_resolution) ? str(last(fs, FieldTags.VideoConfig_resolution)!) : '',
+  fps: last(fs, FieldTags.VideoConfig_fps) ? num(last(fs, FieldTags.VideoConfig_fps)!) : 30,
+  codec: last(fs, FieldTags.VideoConfig_codec) ? str(last(fs, FieldTags.VideoConfig_codec)!) : 'H264',
+  bitrate: last(fs, FieldTags.VideoConfig_bitrate) ? num(last(fs, FieldTags.VideoConfig_bitrate)!) : 0,
+}; }
+function decodeAudio(fs: Field[]): AudioConfig { return {
+  codec: last(fs, FieldTags.AudioConfig_codec) ? str(last(fs, FieldTags.AudioConfig_codec)!) : 'OPUS',
+  sampleRate: last(fs, FieldTags.AudioConfig_sampleRate) ? num(last(fs, FieldTags.AudioConfig_sampleRate)!) : 48000,
+  channels: last(fs, FieldTags.AudioConfig_channels) ? num(last(fs, FieldTags.AudioConfig_channels)!) : 2,
+}; }
+export function decodeMessage(data: Uint8Array, expectedType?: string): ProtocolMessage {
+  if (!expectedType && data.length > 0) expectedType = 'DEVICE_ANNOUNCEMENT';
+  const fs = fields(data);
+  if (expectedType === 'DEVICE_ANNOUNCEMENT') {
+    const caps = last(fs, FieldTags.DeviceAnnouncement_capabilities);
+    return { type: expectedType, deviceId: last(fs, FieldTags.DeviceAnnouncement_deviceId) ? str(last(fs, FieldTags.DeviceAnnouncement_deviceId)!) : '', deviceName: last(fs, FieldTags.DeviceAnnouncement_deviceName) ? str(last(fs, FieldTags.DeviceAnnouncement_deviceName)!) : '', capabilities: caps ? decodeCapabilities(nested(caps)) : { video: false, audio: false, resolutions: [], frameRates: [] } };
   }
-  return result;
+  if (expectedType === 'START_SESSION') {
+    const video = last(fs, FieldTags.StartSession_video); const audio = last(fs, FieldTags.StartSession_audio);
+    return { type: expectedType, sessionId: last(fs, FieldTags.StartSession_sessionId) ? str(last(fs, FieldTags.StartSession_sessionId)!) : '', video: video ? decodeVideo(nested(video)) : { resolution: '', fps: 30, codec: 'H264', bitrate: 0 }, audio: audio ? decodeAudio(nested(audio)) : { codec: 'OPUS', sampleRate: 48000, channels: 2 } };
+  }
+  if (expectedType === 'CONTROL_COMMAND') {
+    const get = (tag: number) => last(fs, tag);
+    const command = get(FieldTags.ControlCommand_type);
+    const zoom = get(FieldTags.ControlCommand_zoom); const focus = get(FieldTags.ControlCommand_focus); const torch = get(FieldTags.ControlCommand_torch); const orientation = get(FieldTags.ControlCommand_orientation);
+    return { type: expectedType, command: command ? str(command) as ControlCommand['command'] : 'orientation', ...(zoom ? { zoom: num(zoom) } : {}), ...(focus ? { focus: num(focus) !== 0 } : {}), ...(torch ? { torch: num(torch) !== 0 } : {}), ...(orientation ? { orientation: str(orientation) as ControlCommand['orientation'] } : {}) };
+  }
+  throw new Error(`Unknown or unsupported message type: ${expectedType}`);
 }
+export function decodeMessageBase64(base64: string, expectedType?: string): ProtocolMessage {
+  const normalized = base64.replace(/-/g, '+').replace(/_/g, '/'); const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4); const binary = atob(padded); const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return decodeMessage(bytes, expectedType);
+}
+

@@ -5,34 +5,48 @@
 #include <algorithm>
 #include <cstring>
 
-#if defined(__APPLE__) || defined(_WIN32)
+#if defined(__APPLE__)
     #include <dns_sd.h>
     #define OJO_MDNS_AVAILABLE 1
+    #define OJO_USE_BONJOUR 1
+#elif defined(_WIN32)
+    #if defined(__has_include)
+        #if __has_include(<dns_sd.h>)
+            #include <dns_sd.h>
+            #define OJO_MDNS_AVAILABLE 1
+            #define OJO_USE_BONJOUR 1
+        #endif
+    #endif
 #elif defined(__linux__)
     #include <avahi-client/client.h>
     #include <avahi-client/lookup.h>
     #include <avahi-common/simple-watch.h>
     #include <avahi-common/error.h>
     #define OJO_MDNS_AVAILABLE 1
+    #define OJO_USE_AVAHI 1
 #endif
 
 namespace {
+
+const char* kOjowacamServiceType = "_ojowacam._tcp";
+const int kOjowacamServicePort = 8765;
 
 std::string makeDeviceId(const std::string& name, const std::string& ip) {
     std::string id = name;
     if (!ip.empty()) id += "@" + ip;
     return id;
 }
+
 // ===========================================================================
 // Bonjour implementation (macOS, Windows)
 // ===========================================================================
-#if defined(OJO_MDNS_AVAILABLE) && defined(__APPLE__)
+#if defined(OJO_USE_BONJOUR)
 
 struct BonjourContext {
     DNSServiceRef sd_ref = nullptr;
     std::thread browse_thread;
     bool running = false;
-    DeviceManager::DeviceCallback callback;
+    ojowacam::DeviceManager::DeviceCallback callback;
 };
 
 static void DNSSD_API browseCallback(
@@ -65,12 +79,12 @@ static void DNSSD_API browseCallback(
             auto* bonjour_ctx = static_cast<BonjourContext*>(ctx);
             if (!bonjour_ctx || !bonjour_ctx->running) return;
 
-            int port = ntohs(port);
-            DiscoveredDevice dev;
+            int resolved_port = ntohs(port);
+            ojowacam::DiscoveredDevice dev;
             dev.device_name = target ? target : "Ojowacam Device";
             dev.device_id = makeDeviceId(dev.device_name, target ? target : "");
             dev.ip_address = target ? target : "";
-            dev.port = port;
+            dev.port = resolved_port;
             dev.supports_video = true;
             dev.supports_audio = true;
 
@@ -112,10 +126,27 @@ void StartBonjourDiscovery(BonjourContext* ctx) {
 
         int result = select(fd + 1, &readfds, nullptr, nullptr, &tv);
         if (result > 0) {
+            DNSServiceProcessResult(ctx->sd_ref);
+        }
+    }
+
+    if (ctx->sd_ref) {
+        DNSServiceRefDeallocate(ctx->sd_ref);
+        ctx->sd_ref = nullptr;
+    }
+}
+
+void StopBonjourDiscovery(BonjourContext* ctx) {
+    ctx->running = false;
+    if (ctx->browse_thread.joinable()) {
+        ctx->browse_thread.join();
+    }
+}
+
 // ===========================================================================
 // Avahi implementation (Linux)
 // ===========================================================================
-#elif defined(OJO_MDNS_AVAILABLE) && defined(__linux__)
+#elif defined(OJO_USE_AVAHI)
 
 struct AvahiContext {
     AvahiClient* client = nullptr;
@@ -123,7 +154,7 @@ struct AvahiContext {
     AvahiSimplePoll* poll = nullptr;
     std::thread poll_thread;
     bool running = false;
-    DeviceManager::DeviceCallback callback;
+    ojowacam::DeviceManager::DeviceCallback callback;
 };
 
 static void AvahiServiceBrowserCallback(
@@ -167,8 +198,8 @@ static void AvahiServiceBrowserCallback(
                     char addr[AVAHI_ADDRESS_STR_MAX];
                     avahi_address_snprintf(addr, sizeof(addr), address);
 
-                    DiscoveredDevice dev;
-                    dev.device_name = host_name ? host_name : name ? name : "Ojowacam Device";
+                    ojowacam::DiscoveredDevice dev;
+                    dev.device_name = host_name ? host_name : (name ? name : "Ojowacam Device");
                     dev.device_id = makeDeviceId(dev.device_name, addr);
                     dev.ip_address = addr;
                     dev.port = static_cast<int>(port);
@@ -234,125 +265,6 @@ void StartAvahiDiscovery(AvahiContext* ctx) {
 
     while (ctx->running) {
         avahi_simple_poll_iterate(ctx->poll, 1000);
-// ===========================================================================
-// No mDNS fallback (platforms without Bonjour/Avahi)
-// ===========================================================================
-#else
-
-struct NoMdnsContext {
-    bool running = false;
-    DeviceManager::DeviceCallback callback;
-};
-
-void StartNoMdnsDiscovery(NoMdnsContext* ctx) {
-    blog(LOG_WARNING, "[Ojowacam] mDNS not available on this platform");
-    ctx->running = false;
-}
-
-void StopNoMdnsDiscovery(NoMdnsContext* ctx) {
-    ctx->running = false;
-}
-#endif  // OJO_MDNS_AVAILABLE
-
-// ===========================================================================
-// DeviceManager implementation
-// ===========================================================================
-
-namespace {
-
-#if defined(OJO_MDNS_AVAILABLE) && defined(__APPLE__)
-using MdnsContext = BonjourContext;
-#elif defined(OJO_MDNS_AVAILABLE) && defined(__linux__)
-using MdnsContext = AvahiContext;
-#else
-using MdnsContext = NoMdnsContext;
-#endif
-
-}
-
-DeviceManager *DeviceManager::GetInstance() {
-    static DeviceManager instance;
-    return &instance;
-}
-
-void DeviceManager::Initialize() {
-    blog(LOG_INFO, "[Ojowacam] Device manager initialized");
-}
-
-void DeviceManager::Shutdown() {
-    StopDiscovery();
-    std::lock_guard<std::mutex> lock(mutex_);
-    devices_.clear();
-}
-
-std::vector<DiscoveredDevice> DeviceManager::GetDevices() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return devices_;
-}
-
-void DeviceManager::AddDevice(const DiscoveredDevice &device) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& d : devices_) {
-        if (d.device_id == device.device_id) return;
-    }
-    devices_.push_back(device);
-}
-
-void DeviceManager::RemoveDevice(const std::string &device_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    devices_.erase(
-        std::remove_if(devices_.begin(), devices_.end(),
-                       [&](const DiscoveredDevice &d) { return d.device_id == device_id; }),
-        devices_.end());
-}
-
-void DeviceManager::SetDeviceCallback(DeviceCallback cb) {
-    device_cb_ = std::move(cb);
-}
-
-void DeviceManager::StartDiscovery() {
-    if (discovery_running_) return;
-
-    mdns_ref_ = new MdnsContext();
-    auto* ctx = static_cast<MdnsContext*>(mdns_ref_);
-    ctx->running = true;
-    ctx->callback = device_cb_;
-
-    discovery_running_ = true;
-
-#if defined(OJO_MDNS_AVAILABLE) && defined(__APPLE__)
-    ctx->browse_thread = std::thread([ctx]() {
-        StartBonjourDiscovery(ctx);
-    });
-#elif defined(OJO_MDNS_AVAILABLE) && defined(__linux__)
-    ctx->poll_thread = std::thread([ctx]() {
-        StartAvahiDiscovery(ctx);
-    });
-#else
-    StartNoMdnsDiscovery(ctx);
-#endif
-}
-
-void DeviceManager::StopDiscovery() {
-    if (!discovery_running_) return;
-    discovery_running_ = false;
-
-    if (mdns_ref_) {
-        auto* ctx = static_cast<MdnsContext*>(mdns_ref_);
-        ctx->running = false;
-
-#if defined(OJO_MDNS_AVAILABLE) && defined(__APPLE__)
-        StopBonjourDiscovery(ctx);
-#elif defined(OJO_MDNS_AVAILABLE) && defined(__linux__)
-        StopAvahiDiscovery(ctx);
-#else
-        StopNoMdnsDiscovery(ctx);
-#endif
-
-        delete ctx;
-        mdns_ref_ = nullptr;
-    }
-}
     }
 
     if (ctx->client) {
@@ -374,26 +286,129 @@ void StopAvahiDiscovery(AvahiContext* ctx) {
         ctx->poll_thread.join();
     }
 }
-#endif  // __linux__
-            DNSServiceProcessResult(ctx->sd_ref);
-        }
-    }
 
-    if (ctx->sd_ref) {
-        DNSServiceRefDeallocate(ctx->sd_ref);
-        ctx->sd_ref = nullptr;
-    }
-}
+// ===========================================================================
+// No mDNS fallback (platforms without Bonjour/Avahi)
+// ===========================================================================
+#else
 
-void StopBonjourDiscovery(BonjourContext* ctx) {
+struct NoMdnsContext {
+    bool running = false;
+    ojowacam::DeviceManager::DeviceCallback callback;
+};
+
+void StartNoMdnsDiscovery(NoMdnsContext* ctx) {
+    blog(LOG_WARNING, "[Ojowacam] mDNS not available on this platform");
     ctx->running = false;
-    if (ctx->browse_thread.joinable()) {
-        ctx->browse_thread.join();
-    }
 }
-#endif  // __APPLE__
 
-const char* kOjowacamServiceType = "_ojowacam._tcp";
-const int kOjowacamServicePort = 8765;
+void StopNoMdnsDiscovery(NoMdnsContext* ctx) {
+    ctx->running = false;
+}
+
+#endif  // mDNS backend selection
+
+// ===========================================================================
+// Platform context alias
+// ===========================================================================
+#if defined(OJO_USE_BONJOUR)
+using MdnsContext = BonjourContext;
+#elif defined(OJO_USE_AVAHI)
+using MdnsContext = AvahiContext;
+#else
+using MdnsContext = NoMdnsContext;
+#endif
 
 } // namespace
+
+namespace ojowacam {
+
+// ===========================================================================
+// DeviceManager implementation
+// ===========================================================================
+
+DeviceManager *DeviceManager::GetInstance() {
+    static DeviceManager instance;
+    return &instance;
+}
+
+void DeviceManager::Initialize() {
+    blog(LOG_INFO, "[Ojowacam] Device manager initialized");
+}
+
+void DeviceManager::Shutdown() {
+    StopDiscovery();
+    std::lock_guard<std::mutex> lock(mutex_);
+    devices_.clear();
+}
+
+std::vector<ojowacam::DiscoveredDevice> DeviceManager::GetDevices() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return devices_;
+}
+
+void DeviceManager::AddDevice(const ojowacam::DiscoveredDevice &device) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& d : devices_) {
+        if (d.device_id == device.device_id) return;
+    }
+    devices_.push_back(device);
+}
+
+void DeviceManager::RemoveDevice(const std::string &device_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    devices_.erase(
+        std::remove_if(devices_.begin(), devices_.end(),
+                       [&](const ojowacam::DiscoveredDevice &d) { return d.device_id == device_id; }),
+        devices_.end());
+}
+
+void DeviceManager::SetDeviceCallback(DeviceCallback cb) {
+    device_cb_ = std::move(cb);
+}
+
+void DeviceManager::StartDiscovery() {
+    if (discovery_running_) return;
+
+    mdns_ref_ = new MdnsContext();
+    auto* ctx = static_cast<MdnsContext*>(mdns_ref_);
+    ctx->running = true;
+    ctx->callback = device_cb_;
+
+    discovery_running_ = true;
+
+#if defined(OJO_USE_BONJOUR)
+    ctx->browse_thread = std::thread([ctx]() {
+        StartBonjourDiscovery(ctx);
+    });
+#elif defined(OJO_USE_AVAHI)
+    ctx->poll_thread = std::thread([ctx]() {
+        StartAvahiDiscovery(ctx);
+    });
+#else
+    StartNoMdnsDiscovery(ctx);
+#endif
+}
+
+void DeviceManager::StopDiscovery() {
+    if (!discovery_running_) return;
+    discovery_running_ = false;
+
+    if (mdns_ref_) {
+        auto* ctx = static_cast<MdnsContext*>(mdns_ref_);
+        ctx->running = false;
+
+#if defined(OJO_USE_BONJOUR)
+        StopBonjourDiscovery(ctx);
+#elif defined(OJO_USE_AVAHI)
+        StopAvahiDiscovery(ctx);
+#else
+        StopNoMdnsDiscovery(ctx);
+#endif
+
+        delete ctx;
+        mdns_ref_ = nullptr;
+    }
+}
+
+} // namespace ojowacam

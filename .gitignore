@@ -74,3 +74,11 @@ yarn.lock
 .env
 .env.local
 .env.*.local
+
+# Local dependencies (OBS headers, CMake, import libs)
+.deps/
+
+# CMake build trees
+**/build/
+!**/build.gradle
+!**/build.gradle.kts

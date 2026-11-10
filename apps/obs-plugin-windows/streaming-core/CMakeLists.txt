@@ -53,4 +53,10 @@ if(APPLE)
     endif()
 elseif(WIN32)
     target_link_libraries(streaming-core PRIVATE ws2_32)
+    # dns_sd.h (Bonjour) is optional on Windows – detected via __has_include
+endif()
+
+# OBS headers for blog()/obs logging used in decoders
+if(OBS_INCLUDE_DIRS)
+    target_include_directories(streaming-core PRIVATE ${OBS_INCLUDE_DIRS})
 endif()

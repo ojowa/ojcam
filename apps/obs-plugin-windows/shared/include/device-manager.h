@@ -5,6 +5,8 @@
 #include <mutex>
 #include <functional>
 
+namespace ojowacam {
+
 struct DiscoveredDevice {
     std::string device_id;
     std::string device_name;

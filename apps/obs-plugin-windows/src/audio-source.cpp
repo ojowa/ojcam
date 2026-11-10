@@ -48,6 +48,11 @@ void *ojowacam_audio_create(obs_data_t *settings, obs_source_t *source)
 
     if (!resolved_device_id.empty() && !resolved_signaling_url.empty()) {
         data->stream_receiver = new ojowacam::StreamReceiver(nullptr, source);
+        data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
+    }
+
+    return data;
+}
 
 obs_properties_t *ojowacam_audio_properties(void *data)
 {
@@ -90,9 +95,4 @@ obs_properties_t *ojowacam_audio_properties(void *data)
     obs_properties_add_int(props, "channels", "Channels", 1, 8, 1);
 
     return props;
-}
-        data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
-    }
-
-    return data;
 }

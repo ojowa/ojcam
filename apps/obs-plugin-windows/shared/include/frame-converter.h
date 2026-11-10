@@ -3,7 +3,7 @@
 #include <obs-module.h>
 #include <vector>
 #include <cstdint>
-#include "../streaming-core.h"
+#include <streaming-core.h>
 
 namespace ojowacam {
 

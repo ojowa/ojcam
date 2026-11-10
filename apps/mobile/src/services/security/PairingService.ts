@@ -174,25 +174,17 @@ export class PairingService {
       };
     }
 
-    if (response.signature && response.signerPublicKey) {
-      const payload = JSON.stringify({
-        deviceId: response.deviceId,
-        sessionToken: response.sessionToken,
-        success: true,
-      });
-      const verified = await deviceIdentity.verifySignature(
-        payload,
-        response.signature,
-        response.signerPublicKey
-      );
-      if (!verified) {
-        pairing.resolved = true;
-        this.pendingPairings.delete(matchingCode);
-        return {
-          success: false,
-          errorMessage: 'Invalid desktop signature',
-        };
-      }
+    if (!response.sessionToken || !response.signature || !response.signerPublicKey) {
+      pairing.resolved = true;
+      this.pendingPairings.delete(matchingCode);
+      return { success: false, errorMessage: 'Pairing response is missing its token or desktop signature' };
+    }
+    const payload = JSON.stringify({ deviceId: response.deviceId, sessionToken: response.sessionToken, success: true });
+    const verified = await deviceIdentity.verifySignature(payload, response.signature, response.signerPublicKey);
+    if (!verified) {
+      pairing.resolved = true;
+      this.pendingPairings.delete(matchingCode);
+      return { success: false, errorMessage: 'Invalid desktop signature' };
     }
 
     pairing.resolved = true;
@@ -301,3 +293,4 @@ function arrayBufferToBase64Url(buf: ArrayBuffer | Uint8Array): string {
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
+

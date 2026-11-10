@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(ojowacam-obs-windows-plugin VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -31,25 +31,44 @@ endforeach()
 if(NOT OBS_FOUND)
     message(STATUS "OBS CMake config package not found, using manual detection")
 
-    find_path(OBS_INCLUDE_DIR
-        NAMES obs-module.h
-        PATHS "${CMAKE_PREFIX_PATH}/include"
-        PATH_SUFFIXES "obs" ""
-        NO_DEFAULT_PATH
+    # Manual paths: repo-local OBS headers + generated import lib
+    set(_OBS_HEADER_CANDIDATES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../.deps/obs-studio/libobs"
+        "${CMAKE_SOURCE_DIR}/../../.deps/obs-studio/libobs"
+        "${CMAKE_PREFIX_PATH}/include"
+        "${CMAKE_PREFIX_PATH}/include/obs"
+    )
+    set(_OBS_LIB_CANDIDATES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../.deps/obs-lib/obs.lib"
+        "${CMAKE_SOURCE_DIR}/../../.deps/obs-lib/obs.lib"
+        "${CMAKE_PREFIX_PATH}/lib/obs.lib"
+        "${CMAKE_PREFIX_PATH}/lib/obs"
+        "${CMAKE_PREFIX_PATH}/bin/obs.lib"
     )
 
-    find_library(OBS_LIB
-        NAMES obs.lib obs
-        PATHS "${CMAKE_PREFIX_PATH}/lib" "${CMAKE_PREFIX_PATH}/bin"
-        NO_DEFAULT_PATH
-    )
+    set(OBS_INCLUDE_DIR "")
+    foreach(_p IN LISTS _OBS_HEADER_CANDIDATES)
+        if(EXISTS "${_p}/obs-module.h")
+            set(OBS_INCLUDE_DIR "${_p}")
+            break()
+        endif()
+    endforeach()
+
+    set(OBS_LIB "")
+    foreach(_p IN LISTS _OBS_LIB_CANDIDATES)
+        if(EXISTS "${_p}")
+            set(OBS_LIB "${_p}")
+            break()
+        endif()
+    endforeach()
 
     if(NOT OBS_INCLUDE_DIR OR NOT OBS_LIB)
         message(FATAL_ERROR
             "Could not find OBS Studio headers and libraries.\n"
             "  OBS_INCLUDE_DIR: ${OBS_INCLUDE_DIR}\n"
             "  OBS_LIB: ${OBS_LIB}\n"
-            "  CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}"
+            "  CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}\n"
+            "Expected headers at .deps/obs-studio/libobs and import lib at .deps/obs-lib/obs.lib"
         )
     endif()
 
