@@ -1,0 +1,133 @@
+name: OBS Plugin Build - macOS
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  OBS_VERSION: '30.1.2'
+
+jobs:
+  obs-plugin-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: |
+          brew update
+          brew install cmake ninja qt@6 ffmpeg curl libuv python3
+
+      - name: Clone OBS Studio SDK
+        run: |
+          git clone --depth 1 --shallow-submodules --recurse-submodules --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git obs-studio
+
+      - name: Configure OBS Studio (macOS)
+        run: |
+          cmake -S obs-studio -B obs-studio/build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_UI=OFF \
+            -DENABLE_PLUGINS=OFF \
+            -DENABLE_SCRIPTING=OFF \
+            -DENABLE_STREAMFX=OFF \
+            -DENABLE_SPEECH_TO_TEXT=OFF \
+            -DENABLE_VST=OFF \
+            -DENABLE_WEBRTC=OFF
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "OBS configure complete"
+
+      - name: Build OBS runtime libraries (macOS)
+        run: |
+          cmake --build obs-studio/build --config Release --target libobs-opengl -j $(sysctl -n hw.ncpu)
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "OBS runtime libraries build complete"
+
+      - name: Install OBS to local prefix (macOS)
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX"
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "OBS installed to $OBS_INSTALL_PREFIX"
+
+      - name: Validate OBS installation (macOS)
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          echo "=== OBS Install Tree ==="
+          find "$OBS_INSTALL_PREFIX" -type f | head -50
+          echo "=== Checking for OBS CMake config ==="
+          found=0
+          for p in "$OBS_INSTALL_PREFIX/lib/cmake/OBS/OBSConfig.cmake" \
+                   "$OBS_INSTALL_PREFIX/lib64/cmake/OBS/OBSConfig.cmake" \
+                   "$OBS_INSTALL_PREFIX/share/cmake/OBS/OBSConfig.cmake"; do
+            if [ -f "$p" ]; then
+              echo "FOUND: $p"
+              found=1
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "WARNING: No OBS CMake config package found. Plugin will use manual detection fallback."
+          fi
+          echo "=== OBS Headers ==="
+          find "$OBS_INSTALL_PREFIX/include" -name "*.h" | head -20
+          echo "=== OBS Libraries ==="
+          find "$OBS_INSTALL_PREFIX/lib" -name "*.dylib" -o -name "*.a" 2>/dev/null | head -10 || find "$OBS_INSTALL_PREFIX/lib" -name "*.so.*" 2>/dev/null | head -10
+
+      - name: Configure Ojowacam OBS Plugin (macOS)
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          cmake -S apps/obs-plugin -B apps/obs-plugin/build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX"
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "Ojowacam plugin configure complete"
+
+      - name: Build Ojowacam OBS Plugin (macOS)
+        run: |
+          cmake --build apps/obs-plugin/build -j $(sysctl -n hw.ncpu)
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "Ojowacam plugin build complete"
+
+      - name: Code sign and notarize macOS OBS Plugin
+        if: env.APPLE_DEVELOPER_ID != ''
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          BUNDLE_PATH=$(find apps/obs-plugin/build/data/obs-plugins/ojowacam-obs -name "*.bundle" -type d | head -1)
+          if [ -n "$BUNDLE_PATH" ]; then
+            codesign --deep --force --sign "$APPLE_DEVELOPER_ID" "$BUNDLE_PATH"
+            echo "macOS OBS plugin signed"
+            
+            xcrun notarytool submit "$BUNDLE_PATH" \
+              --apple-id "$APPLE_NOTARY_APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_NOTARY_PASSWORD" \
+              --wait
+            echo "macOS OBS plugin notarized"
+            
+            xcrun stapler staple "$BUNDLE_PATH"
+            echo "macOS OBS plugin stapled"
+          else
+            echo "No bundle found to sign"
+          fi
+
+      - name: Upload macOS OBS Plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-obs-macos
+          path: |
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.bundle
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.dylib

@@ -8,7 +8,9 @@ on:
       - macOS Desktop Build
       - iOS Build
       - C++ Streaming Core Build
-      - OBS Plugin Build
+      - OBS Plugin Build - Windows
+      - OBS Plugin Build - macOS
+      - OBS Plugin Build - Linux
       - Dependency Security Scan
     types: [completed]
 
@@ -34,8 +36,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
-          EXPECTED_WORKFLOWS: '["Android Build","Windows Desktop Build","macOS Desktop Build","iOS Build","C++ Streaming Core Build","OBS Plugin Build","Dependency Security Scan"]'
-          ARTIFACT_WORKFLOWS: '["Android Build","Windows Desktop Build","macOS Desktop Build","iOS Build","OBS Plugin Build"]'
+          EXPECTED_WORKFLOWS: '["Android Build","Windows Desktop Build","macOS Desktop Build","iOS Build","C++ Streaming Core Build","OBS Plugin Build - Windows","OBS Plugin Build - macOS","OBS Plugin Build - Linux","Dependency Security Scan"]'
+          ARTIFACT_WORKFLOWS: '["Android Build","Windows Desktop Build","macOS Desktop Build","iOS Build","OBS Plugin Build - Windows","OBS Plugin Build - macOS","OBS Plugin Build - Linux"]'
         run: |
           response=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$HEAD_SHA&per_page=100")
           runs=$(jq -c \

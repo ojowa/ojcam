@@ -1,4 +1,4 @@
-name: OBS Plugin Build
+name: OBS Plugin Build - Windows
 
 on:
   push:
@@ -18,30 +18,13 @@ env:
   OBS_VERSION: '30.1.2'
 
 jobs:
-  obs-plugin-build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2022
-            artifact_name: ojowacam-obs-windows
-            cmake_generator: '-G "Visual Studio 17 2022" -A x64'
-            shell: pwsh
-          - os: macos-latest
-            artifact_name: ojowacam-obs-macos
-            cmake_generator: '-G "Unix Makefiles"'
-            shell: bash
-          - os: ubuntu-latest
-            artifact_name: ojowacam-obs-linux
-            cmake_generator: '-G "Unix Makefiles"'
-            shell: bash
+  obs-plugin-windows:
+    runs-on: windows-2022
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Install system dependencies (Windows)
-        if: runner.os == 'Windows'
+      - name: Install system dependencies
         shell: pwsh
         run: |
           if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
@@ -49,8 +32,7 @@ jobs:
           }
           Write-Host "CMake version: $(cmake --version | Select-Object -First 1)"
 
-      - name: Install OBS dependencies (Windows)
-        if: runner.os == 'Windows'
+      - name: Install OBS dependencies
         shell: pwsh
         run: |
           $depsVersion = '2024-03-19'
@@ -62,33 +44,21 @@ jobs:
           Expand-Archive -Path $depsArchive -DestinationPath $depsPath
           Add-Content -Path $env:GITHUB_ENV -Value "OBS_DepsPath64=$depsPath"
 
-      - name: Install system dependencies (macOS/Linux)
-        if: runner.os != 'Windows'
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            brew update
-            brew install cmake ninja qt@6 ffmpeg curl libuv python3
-          elif [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update
-            sudo apt-get install -y cmake build-essential ninja-build qt6-base ffmpeg libuv1-dev python3
-          fi
-
       - name: Clone OBS Studio SDK
         run: |
           git clone --depth 1 --shallow-submodules --recurse-submodules --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git obs-studio
 
-      - name: Resolve Direct3D compiler library (Windows)
-        if: runner.os == 'Windows'
+      - name: Resolve Direct3D compiler library
         shell: pwsh
         run: |
           $sdkLibRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib'
           $candidates = @(
             Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler_47.lib -Recurse -File |
-              Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler_47\.lib$' } |
+              Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler_47\\.lib$' } |
               Sort-Object { [version]$_.Directory.Parent.Parent.Name } -Descending |
               Select-Object -First 1
             Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler.lib -Recurse -File |
-              Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler\.lib$' } |
+              Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler\\.lib$' } |
               Sort-Object { [version]$_.Directory.Parent.Parent.Name } -Descending |
               Select-Object -First 1
           ) | Where-Object { $_ }
@@ -120,10 +90,9 @@ jobs:
           Write-Host "Using Direct3D compiler library: $($d3dCompiler.FullName)"
 
       - name: Configure OBS Studio (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S obs-studio -B obs-studio/build ${{ matrix.cmake_generator }} \
+          cmake -S obs-studio -B obs-studio/build -G "Visual Studio 17 2022" -A x64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DENABLE_UI=OFF \
             -DENABLE_PLUGINS=OFF \
@@ -135,40 +104,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS configure complete"
 
-      - name: Configure OBS Studio (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cmake -S obs-studio -B obs-studio/build ${{ matrix.cmake_generator }} \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DENABLE_UI=OFF \
-            -DENABLE_PLUGINS=OFF \
-            -DENABLE_SCRIPTING=OFF \
-            -DENABLE_STREAMFX=OFF \
-            -DENABLE_SPEECH_TO_TEXT=OFF \
-            -DENABLE_VST=OFF \
-            -DENABLE_WEBRTC=OFF
-          if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS configure complete"
-
       - name: Build OBS runtime libraries (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake --build obs-studio/build --config Release --target libobs-opengl libobs-d3d11 -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS runtime libraries build complete"
 
-      - name: Build OBS runtime libraries (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cmake --build obs-studio/build --config Release --target libobs-opengl -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
-          if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS runtime libraries build complete"
-
       - name: Install OBS to local prefix (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
@@ -176,17 +119,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS installed to $env:OBS_INSTALL_PREFIX"
 
-      - name: Install OBS to local prefix (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX"
-          if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS installed to $OBS_INSTALL_PREFIX"
-
       - name: Validate OBS installation (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
@@ -214,71 +147,25 @@ jobs:
           Get-ChildItem -Path "$env:OBS_INSTALL_PREFIX/lib" -Recurse -Filter "*.lib" -ErrorAction SilentlyContinue
           Get-ChildItem -Path "$env:OBS_INSTALL_PREFIX/bin" -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue
 
-      - name: Validate OBS installation (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          echo "=== OBS Install Tree ==="
-          find "$OBS_INSTALL_PREFIX" -type f | head -50
-          echo "=== Checking for OBS CMake config ==="
-          found=0
-          for p in "$OBS_INSTALL_PREFIX/lib/cmake/OBS/OBSConfig.cmake" \
-                   "$OBS_INSTALL_PREFIX/lib64/cmake/OBS/OBSConfig.cmake" \
-                   "$OBS_INSTALL_PREFIX/share/cmake/OBS/OBSConfig.cmake"; do
-            if [ -f "$p" ]; then
-              echo "FOUND: $p"
-              found=1
-            fi
-          done
-          if [ "$found" -eq 0 ]; then
-            echo "WARNING: No OBS CMake config package found. Plugin will use manual detection fallback."
-          fi
-          echo "=== OBS Headers ==="
-          find "$OBS_INSTALL_PREFIX/include" -name "*.h" | head -20
-          echo "=== OBS Libraries ==="
-          find "$OBS_INSTALL_PREFIX/lib" -name "*.dylib" -o -name "*.a" 2>/dev/null | head -10 || find "$OBS_INSTALL_PREFIX/lib" -name "*.so.*" 2>/dev/null | head -10
-
       - name: Configure Ojowacam OBS Plugin (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:OBS_INSTALL_PREFIX = "$env:GITHUB_WORKSPACE/obs-install"
-          cmake -S apps/obs-plugin -B apps/obs-plugin/build ${{ matrix.cmake_generator }} \
+          cmake -S apps/obs-plugin -B apps/obs-plugin/build -G "Visual Studio 17 2022" -A x64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$env:OBS_INSTALL_PREFIX"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "Ojowacam plugin configure complete"
 
-      - name: Configure Ojowacam OBS Plugin (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          cmake -S apps/obs-plugin -B apps/obs-plugin/build ${{ matrix.cmake_generator }} \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX"
-          if [ $? -ne 0 ]; then exit 1; fi
-          echo "Ojowacam plugin configure complete"
-
       - name: Build Ojowacam OBS Plugin (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake --build apps/obs-plugin/build --config Release --target ojowacam-obs -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "Ojowacam plugin build complete"
 
-      - name: Build Ojowacam OBS Plugin (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cmake --build apps/obs-plugin/build -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
-          if [ $? -ne 0 ]; then exit 1; fi
-          echo "Ojowacam plugin build complete"
-
       - name: Code sign Windows OBS Plugin (Authenticode)
-        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_CERT != ''
+        if: env.WINDOWS_SIGNING_CERT != ''
         env:
           WINDOWS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_CERT }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
@@ -295,7 +182,6 @@ jobs:
           }
 
       - name: Build Ojowacam OBS Plugin MSI
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $pluginOutput = Join-Path $env:GITHUB_WORKSPACE 'apps/obs-plugin/build/package'
@@ -314,44 +200,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Ojowacam OBS Plugin MSI (Windows)
-        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: ojowacam-obs-windows
           path: apps/obs-plugin/build/Ojowacam.ObsPlugin.msi
-
-      - name: Code sign and notarize macOS OBS Plugin
-        if: runner.os == 'macOS' && env.APPLE_DEVELOPER_ID != ''
-        env:
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
-        shell: bash
-        run: |
-          BUNDLE_PATH=$(find apps/obs-plugin/build/data/obs-plugins/ojowacam-obs -name "*.bundle" -type d | head -1)
-          if [ -n "$BUNDLE_PATH" ]; then
-            codesign --deep --force --sign "$APPLE_DEVELOPER_ID" "$BUNDLE_PATH"
-            echo "macOS OBS plugin signed"
-            
-            xcrun notarytool submit "$BUNDLE_PATH" \
-              --apple-id "$APPLE_NOTARY_APPLE_ID" \
-              --team-id "$APPLE_TEAM_ID" \
-              --password "$APPLE_NOTARY_PASSWORD" \
-              --wait
-            echo "macOS OBS plugin notarized"
-            
-            xcrun stapler staple "$BUNDLE_PATH"
-            echo "macOS OBS plugin stapled"
-          else
-            echo "No bundle found to sign"
-          fi
-
-      - name: Upload macOS OBS Plugin artifact
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: |
-            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.bundle
-            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.dylib

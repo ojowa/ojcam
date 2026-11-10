@@ -1,0 +1,83 @@
+name: OBS Plugin Build - Linux
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  OBS_VERSION: '30.1.2'
+
+jobs:
+  obs-plugin-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential ninja-build qt6-base ffmpeg libuv1-dev python3
+
+      - name: Clone OBS Studio SDK
+        run: |
+          git clone --depth 1 --shallow-submodules --recurse-submodules --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git obs-studio
+
+      - name: Configure OBS Studio (Linux)
+        run: |
+          cmake -S obs-studio -B obs-studio/build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_UI=OFF \
+            -DENABLE_PLUGINS=OFF \
+            -DENABLE_SCRIPTING=OFF \
+            -DENABLE_STREAMFX=OFF \
+            -DENABLE_SPEECH_TO_TEXT=OFF \
+            -DENABLE_VST=OFF \
+            -DENABLE_WEBRTC=OFF
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "OBS configure complete"
+
+      - name: Build OBS runtime libraries (Linux)
+        run: |
+          cmake --build obs-studio/build --config Release --target libobs-opengl -j $(nproc)
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "OBS runtime libraries build complete"
+
+      - name: Install OBS to local prefix (Linux)
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX"
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "OBS installed to $OBS_INSTALL_PREFIX"
+
+      - name: Configure Ojowacam OBS Plugin (Linux)
+        run: |
+          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          cmake -S apps/obs-plugin -B apps/obs-plugin/build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX"
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "Ojowacam plugin configure complete"
+
+      - name: Build Ojowacam OBS Plugin (Linux)
+        run: |
+          cmake --build apps/obs-plugin/build -j $(nproc)
+          if [ $? -ne 0 ]; then exit 1; fi
+          echo "Ojowacam plugin build complete"
+
+      - name: Upload Linux OBS Plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-obs-linux
+          path: |
+            apps/obs-plugin/build/data/obs-plugins/ojowacam-obs/**/*.so*
