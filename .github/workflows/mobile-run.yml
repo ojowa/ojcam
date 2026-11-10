@@ -37,13 +37,16 @@ jobs:
           packages: "platform-tools platforms;android-34 build-tools;34.0.0 emulator system-images;android-34;google_apis;x86_64"
           licenses: " emulator,system-images;android-34;google_apis;x86_64"
           accept-android-sdk-licenses: true
-      - name: Download mobile CI artifact (debug APK)
-        uses: actions/download-artifact@v4
+      - name: Install dependencies and build APK
+        run: |
+          sudo apt-get update && sudo apt-get install -y unzip zip
+          cd apps/mobile && npm install
+          cd apps/mobile/android && ./gradlew assembleDebug
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk
-          path: mobile-artifact
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apps/mobile/android/build/outputs/apk/debug/com.ojowacam.mobile-debug.apk
       - name: Create Android emulator (Pixel 6, API 34)
         run: |
           echo "y" | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/avdmanager" create avd \

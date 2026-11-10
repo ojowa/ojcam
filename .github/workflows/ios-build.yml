@@ -32,16 +32,16 @@ jobs:
           cache: 'npm'
       - name: Install mobile dependencies
         run: |
-          cd apps/mobile && npm install
+          cd apps/mobile-ios && npm install
       - name: Install CocoaPods
         run: |
           gem install cocoapods
       - name: Install iOS pods
         run: |
-          cd apps/mobile/ios && pod install
+          cd apps/mobile-ios/ios && pod install
       - name: Create iOS export options plist
         run: |
-          cat > apps/mobile/ios/ExportOptions.plist << EOF
+          cat > apps/mobile-ios/ios/ExportOptions.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -49,7 +49,7 @@ jobs:
               <key>compileBitcode</key>
               <false/>
               <key>method</key>
-              <string>ad-hoc</string>
+              <string>ad hoc</string>
               <key>signingStyle</key>
               <string>automatic</string>
               <key>stripSwiftSymbols</key>
@@ -61,15 +61,15 @@ jobs:
           EOF
       - name: Build iOS app (archive)
         run: |
-          cd apps/mobile/ios
+          cd apps/mobile-ios/ios
           xcodebuild -project Ojowacam.xcodeproj -scheme Ojowacam -configuration Release -sdk iphoneos -archivePath build/Ojowacam.xcarchive archive
       - name: Export iOS IPA
         run: |
-          cd apps/mobile/ios
+          cd apps/mobile-ios/ios
           xcodebuild -exportArchive -archivePath build/Ojowacam.xcarchive -exportPath build/ipa -exportOptionsPlist ExportOptions.plist
       - name: Upload iOS IPA
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-ios-ipa
-          path: apps/mobile/ios/build/ipa/*.ipa
+          path: apps/mobile-ios/ios/build/ipa/*.ipa
           if-no-files-found: continue

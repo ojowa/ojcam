@@ -45,27 +45,27 @@ jobs:
       - name: Install dependencies
         run: |
           npm install
-          cd apps/mobile && npm install
+          cd apps/mobile-android && npm install
       - name: Android native modules present
         run: |
-          echo "Android native modules exist at apps/mobile/android/"
-          ls apps/mobile/android/src/main/java/com/ojowacam/mobile/
+          echo "Android native modules exist at apps/mobile-android/android/"
+          ls apps/mobile-android/android/src/main/java/com/ojowacam/mobile/
           echo "Building Android APK with Gradle 8.0..."
           sudo apt-get update && sudo apt-get install -y unzip zip
-          cd apps/mobile/android && ./gradlew assembleDebug
+          cd apps/mobile-android/android && ./gradlew assembleDebug
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk
-          path: apps/mobile/android/build/outputs/apk/debug/com.ojowacam.mobile-debug.apk
+          path: apps/mobile-android/android/build/outputs/apk/debug/com.ojowacam.mobile-debug.apk
           if-no-files-found: continue
       - name: Decode Android release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > apps/mobile/android/ojowacam-upload-keystore.jks
-            echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/apps/mobile/android/ojowacam-upload-keystore.jks" >> $GITHUB_ENV
+            echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > apps/mobile-android/android/ojowacam-upload-keystore.jks
+            echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/apps/mobile-android/android/ojowacam-upload-keystore.jks" >> $GITHUB_ENV
           fi
       - name: Build Android release APK and AAB
         env:
@@ -75,7 +75,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -n "$ANDROID_KEYSTORE_PATH" ]; then
-            cd apps/mobile/android
+            cd apps/mobile-android/android
             ./gradlew assembleRelease bundleRelease
           fi
       - name: Upload Android release APK
@@ -83,10 +83,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk-release
-          path: apps/mobile/android/build/outputs/apk/release/com.ojowacam.mobile-release.apk
+          path: apps/mobile-android/android/build/outputs/apk/release/com.ojowacam.mobile-release.apk
       - name: Upload Android AAB
         if: env.ANDROID_KEYSTORE_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-aab
-          path: apps/mobile/android/build/outputs/bundle/release/com.ojowacam.mobile-release.aab
+          path: apps/mobile-android/android/build/outputs/bundle/release/com.ojowacam.mobile-release.aab

@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm install
-          cd apps/mobile && npm install
+          cd apps/mobile-ios && npm install
       - name: Build macOS companion
         run: |
           cd apps/desktop-macos && swift build -c release
