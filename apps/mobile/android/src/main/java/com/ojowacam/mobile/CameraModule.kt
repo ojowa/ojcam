@@ -29,6 +29,12 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     var onEncodedFrame: ((ByteArray) -> Unit)? = null
     var onVideoFrame: ((ByteArray, Long) -> Unit)? = null
 
+    /** Frame dimensions from the active capture session; used by pipeline consumers. */
+    var frameWidth: Int = 0
+        private set
+    var frameHeight: Int = 0
+        private set
+
     init {
         cameraManager = reactContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     }
@@ -60,6 +66,8 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             stopCaptureInternal()
             currentCameraId = cameraId
             isStreaming = true
+            frameWidth = width
+            frameHeight = height
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
             imageReader = ImageReader.newInstance(width, height, android.graphics.ImageFormat.YUV_420_888, 5)
             val stateCallback = object : CameraDevice.StateCallback() {
@@ -89,22 +97,12 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val listener = object : ImageReader.OnImageAvailableListener {
                 override fun onImageAvailable(reader: ImageReader) {
                     reader.acquireNextImage()?.use { image ->
-                        val planes = image.planes
-                        if (planes.size >= 3) {
-                            val yBuffer = planes[0].buffer
-                            val uBuffer = planes[1].buffer
-                            val vBuffer = planes[2].buffer
-                            val ySize = yBuffer.remaining()
-                            val uSize = uBuffer.remaining()
-                            val vSize = vBuffer.remaining()
-                            val totalSize = ySize + uSize + vSize
-                            val yuvData = ByteArray(totalSize)
-                            yBuffer.get(yuvData, 0, ySize)
-                            uBuffer.get(yuvData, ySize, uSize)
-                            vBuffer.get(yuvData, ySize + uSize, vSize)
+                        val yuvData = yuv420888ToI420(image)
+                        if (yuvData != null) {
+                            // Monotonic nanoseconds for WebRTC timestamps.
+                            val timestampNs = System.nanoTime()
+                            onVideoFrame?.invoke(yuvData, timestampNs)
                             onEncodedFrame?.invoke(yuvData)
-                            val timestamp = System.currentTimeMillis()
-                            onVideoFrame?.invoke(yuvData, timestamp)
                         }
                         image.close()
                     }
@@ -140,6 +138,8 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
 
     private fun stopCaptureInternal() {
         isStreaming = false
+        frameWidth = 0
+        frameHeight = 0
         captureSession?.stopRepeating()
         captureSession?.close()
         captureSession = null
@@ -147,6 +147,67 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         cameraDevice = null
         imageReader?.close()
         imageReader = null
+    }
+
+    /**
+     * Convert YUV_420_888 (row/pixel strides) to tightly packed I420:
+     * Y plane (w*h), then U (w/2 * h/2), then V (w/2 * h/2).
+     */
+    private fun yuv420888ToI420(image: android.media.Image): ByteArray? {
+        val width = image.width
+        val height = image.height
+        if (width <= 0 || height <= 0 || image.planes.size < 3) return null
+
+        val ySize = width * height
+        val chromaWidth = width / 2
+        val chromaHeight = height / 2
+        val chromaSize = chromaWidth * chromaHeight
+        val out = ByteArray(ySize + chromaSize * 2)
+
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+
+        copyPlane(yPlane.buffer, yPlane.rowStride, yPlane.pixelStride, width, height, out, 0, ySize, width)
+        copyPlane(uPlane.buffer, uPlane.rowStride, uPlane.pixelStride, chromaWidth, chromaHeight, out, ySize, chromaSize, chromaWidth)
+        copyPlane(vPlane.buffer, vPlane.rowStride, vPlane.pixelStride, chromaWidth, chromaHeight, out, ySize + chromaSize, chromaSize, chromaWidth)
+        return out
+    }
+
+    private fun copyPlane(
+        src: java.nio.ByteBuffer,
+        rowStride: Int,
+        pixelStride: Int,
+        width: Int,
+        height: Int,
+        dst: ByteArray,
+        dstOffset: Int,
+        dstSize: Int,
+        dstRowStride: Int,
+    ) {
+        src.rewind()
+        if (pixelStride == 1 && rowStride == width) {
+            val toCopy = minOf(src.remaining(), dstSize)
+            src.get(dst, dstOffset, toCopy)
+            return
+        }
+        var outPos = dstOffset
+        for (row in 0 until height) {
+            val srcPos = row * rowStride
+            if (pixelStride == 1) {
+                for (col in 0 until width) {
+                    if (srcPos + col >= src.limit()) break
+                    dst[outPos + col] = src.get(srcPos + col)
+                }
+            } else {
+                for (col in 0 until width) {
+                    val idx = srcPos + col * pixelStride
+                    if (idx >= src.limit()) break
+                    dst[outPos + col] = src.get(idx)
+                }
+            }
+            outPos += dstRowStride
+        }
     }
 
     @ReactMethod

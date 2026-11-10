@@ -138,12 +138,12 @@ export class WebRTCService {
     return OjowacamWebRTC.addIceCandidate(candidate);
   }
 
-  static async addVideoTrack(track: any): Promise<boolean> {
-    return OjowacamWebRTC.addVideoTrack(track);
+  static async addVideoTrack(trackId: string = 'ojowacam-video'): Promise<boolean> {
+    return OjowacamWebRTC.addVideoTrack(trackId);
   }
 
-  static async addAudioTrack(track: any): Promise<boolean> {
-    return OjowacamWebRTC.addAudioTrack(track);
+  static async addAudioTrack(trackId: string = 'ojowacam-audio'): Promise<boolean> {
+    return OjowacamWebRTC.addAudioTrack(trackId);
   }
 
   static async closeConnection(): Promise<boolean> {

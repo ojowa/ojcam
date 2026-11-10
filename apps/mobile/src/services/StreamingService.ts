@@ -303,8 +303,8 @@ export class StreamingService {
       await AudioService.startRecording();
       await EncoderService.initEncoder(this.width, this.height, config.bitrate, config.fps);
       await WebRTCService.createPeerConnection(this.iceServers);
-      await WebRTCService.addVideoTrack(null);
-      await WebRTCService.addAudioTrack(null);
+      await WebRTCService.addVideoTrack('ojowacam-video');
+      await WebRTCService.addAudioTrack('ojowacam-audio');
       await WebRTCService.createOffer();
       const videoConfig: VideoConfig = {
         resolution: config.resolution, fps: config.fps, codec: config.codec, bitrate: config.bitrate,

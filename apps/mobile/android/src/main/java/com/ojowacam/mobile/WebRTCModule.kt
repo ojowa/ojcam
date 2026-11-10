@@ -21,6 +21,8 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     private var videoSource: VideoSource? = null
     private var audioSource: AudioSource? = null
     private var videoSink: VideoSink? = null
+    private var frameWidth = 0
+    private var frameHeight = 0
 
     override fun getName(): String = "OjowacamWebRTC"
 
@@ -124,14 +126,7 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     @ReactMethod
     fun createVideoTrack(trackId: String, promise: Promise) {
         try {
-            val factory = peerConnectionFactory ?: throw Exception("WebRTC not initialized")
-            videoSource = factory.createVideoSource(false)
-            videoTrack = factory.createVideoTrack(trackId, videoSource!!)
-            videoSink = object : VideoSink {
-                override fun onFrame(frame: VideoFrame) {}
-            }
-            videoTrack!!.addSink(videoSink!!)
-            promise.resolve(true)
+            addVideoTrack(trackId, promise)
         } catch (e: Exception) {
             promise.reject("VIDEO_TRACK_ERROR", e.message, e)
         }
@@ -140,35 +135,48 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     @ReactMethod
     fun createAudioTrack(trackId: String, promise: Promise) {
         try {
-            val factory = peerConnectionFactory ?: throw Exception("WebRTC not initialized")
-            audioSource = factory.createAudioSource(MediaConstraints())
-            audioTrack = factory.createAudioTrack(trackId, audioSource!!)
-            promise.resolve(true)
+            addAudioTrack(trackId, promise)
         } catch (e: Exception) {
             promise.reject("AUDIO_TRACK_ERROR", e.message, e)
         }
     }
 
-    fun deliverVideoFrame(yuvData: ByteArray, timestampNs: Long, width: Int, height: Int) {
-        val track = videoTrack ?: return
+    /**
+     * Push a tightly packed I420 frame (Y, then U, then V) into the local video track.
+     * Called by the camera pipeline via OjowacamPackage wiring.
+     */
+    fun deliverVideoFrame(i420: ByteArray, timestampNs: Long, width: Int, height: Int) {
         val source = videoSource ?: return
+        if (width <= 0 || height <= 0 || i420.isEmpty()) return
+
+        val ySize = width * height
+        val chromaWidth = width / 2
+        val chromaHeight = height / 2
+        val uSize = chromaWidth * chromaHeight
+        val vSize = uSize
+        if (i420.size < ySize + uSize + vSize) return
+
         try {
-            val yuvFrame = I420Frame(width, height)
-            val ySize = width * height
-            val uSize = (width / 2) * (height / 2)
-            val vSize = uSize
-            val yBuffer = ByteBuffer.wrap(yuvData, 0, ySize)
-            val uBuffer = ByteBuffer.wrap(yuvData, ySize, uSize)
-            val vBuffer = ByteBuffer.wrap(yuvData, ySize + uSize, vSize)
-            yuvFrame.yData = yBuffer
-            yuvFrame.uData = uBuffer
-            yuvFrame.vData = vBuffer
-            yuvFrame.yStride = width
-            yuvFrame.uStride = width / 2
-            yuvFrame.vStride = width / 2
-            yuvFrame.timestampNs = timestampNs * 1000
-            source.adaptFrame(yuvFrame, 0, 0)
-            yuvFrame.release()
+            val yBuffer = ByteBuffer.allocateDirect(ySize)
+            val uBuffer = ByteBuffer.allocateDirect(uSize)
+            val vBuffer = ByteBuffer.allocateDirect(vSize)
+            yBuffer.put(i420, 0, ySize).flip()
+            uBuffer.put(i420, ySize, uSize).flip()
+            vBuffer.put(i420, ySize + uSize, vSize).flip()
+
+            val buffer = JavaI420Buffer.wrap(
+                width, height,
+                yBuffer, width,
+                uBuffer, chromaWidth,
+                vBuffer, chromaWidth,
+                null,
+            )
+            val frame = VideoFrame(buffer, 0, timestampNs)
+            try {
+                source.capturerObserver.onFrameCaptured(frame)
+            } finally {
+                frame.release()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to deliver video frame", e)
         }
@@ -187,12 +195,6 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun createOffer(promise: Promise) {
         try {
             val pc = peerConnection ?: throw Exception("No peer connection")
-            if (videoTrack != null) {
-                pc.addTrack(videoTrack!!, listOf("ojowacam-video"))
-            }
-            if (audioTrack != null) {
-                pc.addTrack(audioTrack!!, listOf("ojowacam-audio"))
-            }
             val sdpConstraints = MediaConstraints()
             sdpConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveAudio", "true"))
             sdpConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveVideo", "false"))
@@ -276,6 +278,8 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             videoSource = null
             audioSource = null
             videoSink = null
+            frameWidth = 0
+            frameHeight = 0
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("CLOSE_ERROR", e.message, e)
@@ -286,10 +290,25 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun addVideoTrack(trackId: String, promise: Promise) {
         try {
             val factory = peerConnectionFactory ?: throw Exception("WebRTC not initialized")
-            videoSource = factory.createVideoSource(false)
-            videoTrack = factory.createVideoTrack(trackId, videoSource!!)
             val pc = peerConnection ?: throw Exception("No peer connection")
-            pc.addTrack(videoTrack!!, listOf("ojowacam-video"))
+            val id = if (trackId.isBlank()) "ojowacam-video" else trackId
+
+            videoSource?.let { src ->
+                videoTrack?.let { src.removeSink(it) }
+            }
+            videoTrack = null
+            videoSource = null
+            videoSink = null
+
+            videoSource = factory.createVideoSource(false)
+            videoTrack = factory.createVideoTrack(id, videoSource!!)
+            videoSink = object : VideoSink {
+                override fun onFrame(frame: VideoFrame) {}
+            }
+            videoTrack!!.addSink(videoSink!!)
+            pc.addTrack(videoTrack!!, listOf("ojowacam-stream"))
+            frameWidth = 0
+            frameHeight = 0
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ADD_VIDEO_TRACK_ERROR", e.message, e)
@@ -300,10 +319,12 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun addAudioTrack(trackId: String, promise: Promise) {
         try {
             val factory = peerConnectionFactory ?: throw Exception("WebRTC not initialized")
-            audioSource = factory.createAudioSource(MediaConstraints())
-            audioTrack = factory.createAudioTrack(trackId, audioSource!!)
             val pc = peerConnection ?: throw Exception("No peer connection")
-            pc.addTrack(audioTrack!!, listOf("ojowacam-audio"))
+            val id = if (trackId.isBlank()) "ojowacam-audio" else trackId
+
+            audioSource = factory.createAudioSource(MediaConstraints())
+            audioTrack = factory.createAudioTrack(id, audioSource!!)
+            pc.addTrack(audioTrack!!, listOf("ojowacam-stream"))
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ADD_AUDIO_TRACK_ERROR", e.message, e)

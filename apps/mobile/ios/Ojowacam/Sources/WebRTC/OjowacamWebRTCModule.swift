@@ -146,32 +146,34 @@ class OjowacamWebRTCModule: RCTEventEmitter {
     }
 
     @objc
-    func addVideoTrack(_ track: NSDictionary, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    func addVideoTrack(_ trackId: String, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
         guard let pc = peerConnection, let factory = peerConnectionFactory else {
             resolve(false)
             return
         }
 
+        let id = trackId.isEmpty ? "ojowacam-video" : trackId
         let videoSource = factory.videoSource()
-        let videoTrack = factory.videoTrack(with: videoSource, trackId: "video0")
+        let videoTrack = factory.videoTrack(with: videoSource, trackId: id)
 
-        pc.add(videoTrack, streamIds: ["stream0"])
+        pc.add(videoTrack, streamIds: ["ojowacam-stream"])
         self.videoTrack = videoTrack
 
         resolve(true)
     }
 
     @objc
-    func addAudioTrack(_ track: NSDictionary, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    func addAudioTrack(_ trackId: String, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
         guard let pc = peerConnection, let factory = peerConnectionFactory else {
             resolve(false)
             return
         }
 
+        let id = trackId.isEmpty ? "ojowacam-audio" : trackId
         let audioSource = factory.audioSource(with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
-        let audioTrack = factory.audioTrack(with: audioSource, trackId: "audio0")
+        let audioTrack = factory.audioTrack(with: audioSource, trackId: id)
 
-        pc.add(audioTrack, streamIds: ["stream0"])
+        pc.add(audioTrack, streamIds: ["ojowacam-stream"])
         self.audioTrack = audioTrack
 
         resolve(true)
