@@ -72,6 +72,18 @@ export class SignalingService {
     }
     return { code: result.code.code, qrPayload: result.qrPayload };
   }
+  async submitPairingCode(pairingCode: string): Promise<void> {
+    pairingService.adoptPairingCode(pairingCode);
+    if (this.transport.isConnected()) {
+      this.transport.send(JSON.stringify({
+        type: 'PAIRING_REQUEST',
+        deviceId: deviceIdentity.getDeviceId(),
+        pairingCode,
+      }));
+    } else {
+      throw new Error('Not connected to signaling server');
+    }
+  }
   disconnect(): void { this.transport.disconnect(); authService.expireSession(); }
 
   private async handleIncomingMessage(data: string): Promise<void> {

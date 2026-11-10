@@ -28,6 +28,26 @@ public partial class MainWindow : Window
         _streamService.ConnectionStatusChanged += OnConnectionStatusChanged;
         _streamService.VideoFrameReady += OnVideoFrameReady;
         _streamService.AudioSamplesReady += OnAudioSamplesReady;
+        _streamService.PairingCodeGenerated += OnPairingCodeGenerated;
+        _streamService.PairingCompleted += OnPairingCompleted;
+    }
+
+    private void OnPairingCodeGenerated(object? sender, string code)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            StatusText.Text = $"Pairing code: {code}";
+        });
+    }
+
+    private void OnPairingCompleted(object? sender, Ojowacam.Pairing.PairingResult result)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            StatusText.Text = result.Success
+                ? "Pairing complete"
+                : $"Pairing failed: {result.ErrorMessage}";
+        });
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)

@@ -3,7 +3,7 @@
  * Unit tests for the StreamingService module.
  */
 
-import { StreamingService } from '../services/StreamingService';
+import { StreamingService, defaultStreamingConfig } from '../services/StreamingService';
 import { signalingService } from '../services/signaling/SignalingService';
 import { authService } from '../services/security/AuthService';
 import { deviceIdentity } from '../services/security/DeviceIdentity';
@@ -68,7 +68,7 @@ describe('StreamingService', () => {
   });
 
   it('should not start streaming when not authenticated and autoPair is false', async () => {
-    const service = new StreamingService({ ...service.defaultConfig(), autoPair: false });
+    const service = new StreamingService({ ...defaultStreamingConfig, autoPair: false });
     await service.initialize();
     const result = await service.startStreaming('camera-0', {
       resolution: '1920x1080',
@@ -96,13 +96,3 @@ describe('StreamingService', () => {
   });
 });
 
-// Static helper to access default config for testing
-Object.defineProperty(StreamingService.prototype, 'defaultConfig', {
-  get: function () {
-    return {
-      signalingUrl: 'ws://localhost:8080',
-      deviceName: 'Ojowacam Mobile',
-      autoPair: true,
-    };
-  },
-});

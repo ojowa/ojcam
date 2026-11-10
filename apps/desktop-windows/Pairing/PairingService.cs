@@ -92,7 +92,8 @@ public class PairingService
                 };
             }
 
-            if (pending.DeviceId != deviceId)
+            // Empty registered device id means mobile-initiated adoption; otherwise enforce match.
+            if (!string.IsNullOrEmpty(pending.DeviceId) && pending.DeviceId != deviceId)
             {
                 return new PairingResult
                 {
@@ -102,12 +103,23 @@ public class PairingService
             }
 
             pending.IsValidated = true;
+            pending.DeviceId = deviceId;
 
             return new PairingResult
             {
                 Success = true,
-                SessionToken = pending.SessionToken
+                SessionToken = pending.SessionToken ?? Guid.NewGuid().ToString()
             };
+        }
+    }
+
+    public bool HasPendingCode(string code)
+    {
+        lock (_lock)
+        {
+            return _pendingPairings.TryGetValue(code, out var pending)
+                && !pending.IsValidated
+                && pending.ExpiresAt > DateTime.UtcNow;
         }
     }
 

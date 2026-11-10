@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, StatusBar } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { CameraService } from '../native/modules';
 import { streamingService } from '../services/StreamingService';
 import { CameraDevice } from '../native/modules';
@@ -9,6 +10,19 @@ export default function CameraScreen() {
   const [cameras, setCameras] = React.useState<CameraDevice[]>([]);
   const [selectedCamera, setSelectedCamera] = React.useState<string>('back');
   const [torch, setTorch] = React.useState(false);
+  const [pairingCode, setPairingCode] = React.useState<string | null>(null);
+  const [streamError, setStreamError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const handleState = (state: ReturnType<typeof streamingService.getState>) => {
+      setPairingCode(state.pairingCode);
+      setStreamError(state.error);
+      setIsStreaming(state.isStreaming);
+    };
+    handleState(streamingService.getState());
+    streamingService.setOnStateChange(handleState);
+    return () => streamingService.setOnStateChange(() => undefined);
+  }, []);
 
   const loadCameras = async () => {
     const available = await CameraService.getAvailableCameras();
@@ -70,6 +84,20 @@ export default function CameraScreen() {
         <View style={styles.row}>
           <Text style={styles.label}>Streaming: {isStreaming ? 'LIVE' : 'IDLE'}</Text>
         </View>
+
+        {pairingCode ? (
+          <View style={styles.pairingBanner}>
+            <Text style={styles.pairingLabel}>Pairing code</Text>
+            <Text style={styles.pairingCode}>{pairingCode}</Text>
+            <Text style={styles.pairingHint}>Enter this code on your desktop to complete pairing</Text>
+          </View>
+        ) : null}
+
+        {streamError && !pairingCode ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{streamError}</Text>
+          </View>
+        ) : null}
       </View>
 
       <StatusBar style="auto" />
@@ -115,5 +143,42 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     marginBottom: 8,
+  },
+  pairingBanner: {
+    backgroundColor: 'rgba(0, 122, 255, 0.25)',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  pairingLabel: {
+    color: '#fff',
+    fontSize: 13,
+    opacity: 0.8,
+    marginBottom: 4,
+  },
+  pairingCode: {
+    color: '#fff',
+    fontSize: 32,
+    fontWeight: '700',
+    letterSpacing: 6,
+    marginBottom: 6,
+  },
+  pairingHint: {
+    color: '#fff',
+    fontSize: 12,
+    opacity: 0.8,
+    textAlign: 'center',
+  },
+  errorBanner: {
+    backgroundColor: 'rgba(255, 59, 48, 0.25)',
+    borderRadius: 12,
+    padding: 12,
+  },
+  errorText: {
+    color: '#fff',
+    fontSize: 13,
+    textAlign: 'center',
   },
 });

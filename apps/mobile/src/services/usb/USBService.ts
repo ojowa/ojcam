@@ -18,7 +18,7 @@ export class USBService {
   private static isInitialized = false;
 
   static async initialize(): Promise<boolean> {
-    if (isInitialized) return true;
+    if (USBService.isInitialized) return true;
 
     try {
       // Set up event listeners
@@ -36,7 +36,7 @@ export class USBService {
         USBService.notifyListeners('onUSBDataReceived', data);
       });
 
-      isInitialized = true;
+      USBService.isInitialized = true;
       return true;
     } catch (error) {
       console.error('Failed to initialize USB service:', error);
@@ -45,8 +45,8 @@ export class USBService {
   }
 
   static async startUSB(deviceId: string, localPort: number, remotePort: number): Promise<boolean> {
-    if (!isInitialized) {
-      await initialize();
+    if (!USBService.isInitialized) {
+      await USBService.initialize();
     }
 
     try {
@@ -66,6 +66,7 @@ export class USBService {
       console.error('Failed to stop USB:', error);
       return false;
     }
+  }
 
   static async getUSBDevices(): Promise<USBDeviceInfo[]> {
     try {

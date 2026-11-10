@@ -10,7 +10,7 @@ import {
   WebRTCService,
   type CameraDevice,
   type StreamConfig,
-} from './native/modules';
+} from '../native/modules';
 import { signalingService } from './signaling/SignalingService';
 import { authService } from './security/AuthService';
 import { pairingService } from './security/PairingService';
@@ -33,6 +33,7 @@ export interface StreamingState {
   currentCameraId: string | null;
   sessionTTL: number;
   error: string | null;
+  pairingCode: string | null;
 }
 
 export const defaultStreamingConfig: StreamingConfig = {
@@ -66,9 +67,11 @@ export class StreamingService {
     currentCameraId: null,
     sessionTTL: 0,
     error: null,
+    pairingCode: null,
   };
 
   private onStateChange?: (state: StreamingState) => void;
+  private pairingWaiter: { resolve: (success: boolean) => void } | null = null;
 
   constructor(config: StreamingConfig = defaultStreamingConfig) {
     this.config = config;
@@ -91,10 +94,12 @@ export class StreamingService {
       },
       onMessage: (message) => this.handleIncomingSignalingMessage(message),
       onPairingCodeGenerated: (code) => {
+        this.state.pairingCode = code.code;
         this.state.error = `Pairing code: ${code.code}`;
         this.notifyStateChange();
       },
       onPairingCompleted: (success, sessionToken, error) => {
+        this.state.pairingCode = null;
         if (success && sessionToken) {
           this.state.isAuthenticated = true;
           this.state.isPaired = true;
@@ -103,6 +108,9 @@ export class StreamingService {
           this.state.error = error || 'Pairing failed';
         }
         this.notifyStateChange();
+        const waiter = this.pairingWaiter;
+        this.pairingWaiter = null;
+        waiter?.resolve(success);
       },
       onError: (err) => {
         this.state.error = err.message;
@@ -158,6 +166,56 @@ export class StreamingService {
     return h || 1080;
   }
 
+  async requestPairing(): Promise<string> {
+    const { code } = await signalingService.requestPairing();
+    this.state.pairingCode = code;
+    this.state.error = `Pairing code: ${code}`;
+    this.notifyStateChange();
+    return code;
+  }
+
+  async submitPairingCode(code: string): Promise<void> {
+    const trimmed = code.trim();
+    if (!trimmed) throw new Error('Pairing code is required');
+    await signalingService.submitPairingCode(trimmed);
+    this.state.pairingCode = trimmed;
+    this.state.error = `Waiting for desktop to confirm code ${trimmed}...`;
+    this.notifyStateChange();
+  }
+
+  private waitForPairing(timeoutMs: number): Promise<boolean> {
+    if (authService.isAuthenticated()) return Promise.resolve(true);
+    if (this.pairingWaiter) {
+      // A wait is already in progress; piggy-back on it via a short poll fallback.
+      return new Promise((resolve) => {
+        const start = Date.now();
+        const poll = setInterval(() => {
+          if (authService.isAuthenticated()) {
+            clearInterval(poll);
+            resolve(true);
+          } else if (Date.now() - start >= timeoutMs) {
+            clearInterval(poll);
+            resolve(false);
+          }
+        }, 250);
+      });
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pairingWaiter) {
+          this.pairingWaiter = null;
+          resolve(false);
+        }
+      }, timeoutMs);
+      this.pairingWaiter = {
+        resolve: (success) => {
+          clearTimeout(timer);
+          resolve(success || authService.isAuthenticated());
+        },
+      };
+    });
+  }
+
   async startStreaming(cameraId: string, config: StreamConfig, signalingUrl?: string): Promise<boolean> {
     if (this.isStreaming) { console.warn('Already streaming'); return false; }
     try {
@@ -165,9 +223,10 @@ export class StreamingService {
       if (signalingUrl) { this.config.signalingUrl = signalingUrl; signalingService.setServerUrl(signalingUrl); }
       if (!authService.isAuthenticated()) {
         if (this.config.autoPair) {
-          await signalingService.requestPairing();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          if (!authService.isAuthenticated()) {
+          await this.requestPairing();
+          const paired = await this.waitForPairing(10 * 60 * 1000);
+          this.state.pairingCode = null;
+          if (!paired || !authService.isAuthenticated()) {
             throw new Error('Authentication required. Please complete pairing first.');
           }
         } else {

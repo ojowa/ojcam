@@ -32,8 +32,14 @@ public class SignalingMessage
     public string? SdpType { get; set; }
     public string? Candidate { get; set; }
     public string? DeviceId { get; set; }
+    public string? DeviceName { get; set; }
     public string? PairingCode { get; set; }
     public string? ErrorMessage { get; set; }
+    public bool? Success { get; set; }
+    public string? SessionToken { get; set; }
+    public string? Signature { get; set; }
+    public string? SignerPublicKey { get; set; }
+    public object? QrPayload { get; set; }
 }
 
 public class ConnectionStatus

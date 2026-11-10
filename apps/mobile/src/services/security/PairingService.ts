@@ -131,6 +131,20 @@ export class PairingService {
     return btoa(JSON.stringify(qrPayload));
   }
 
+  adoptPairingCode(code: string): void {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    if (this.pendingPairings.has(trimmed) && !this.pendingPairings.get(trimmed)!.resolved) {
+      return;
+    }
+    this.pendingPairings.set(trimmed, {
+      code: trimmed,
+      deviceId: deviceIdentity.getDeviceId(),
+      expiresAt: Date.now() + this.config.tokenExpirationMinutes * 60 * 1000,
+      resolved: false,
+    });
+  }
+
   async handlePairingResponse(response: {
     deviceId: string;
     pairingCode: string;

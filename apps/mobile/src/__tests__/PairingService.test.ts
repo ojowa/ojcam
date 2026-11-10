@@ -60,6 +60,7 @@ describe('PairingService', () => {
 
     const pairingResult = await pairingService.handlePairingResponse({
       deviceId: deviceIdentity.getDeviceId(),
+      pairingCode: result.code.code,
       sessionToken,
       success: true,
     });
@@ -71,10 +72,11 @@ describe('PairingService', () => {
   it('should reject a pairing response with no pending pairing', async () => {
     const result = await pairingService.handlePairingResponse({
       deviceId: 'unknown-device',
+      pairingCode: 'unknown-code',
       success: true,
     });
     expect(result.success).toBe(false);
-    expect(result.errorMessage).toContain('No pending pairing');
+    expect(result.errorMessage).toContain('No matching pending pairing');
   });
 
   it('should reject an expired pairing code', async () => {
@@ -85,6 +87,7 @@ describe('PairingService', () => {
 
     const pairingResult = await pairingService.handlePairingResponse({
       deviceId: deviceIdentity.getDeviceId(),
+      pairingCode: result.code.code,
       success: true,
     });
     expect(pairingResult.success).toBe(false);
@@ -92,9 +95,10 @@ describe('PairingService', () => {
   });
 
   it('should reject a failed pairing response', async () => {
-    await pairingService.generatePairingCode('Test Device');
+    const generated = await pairingService.generatePairingCode('Test Device');
     const result = await pairingService.handlePairingResponse({
       deviceId: deviceIdentity.getDeviceId(),
+      pairingCode: generated.code.code,
       success: false,
       errorMessage: 'Desktop rejected pairing',
     });
