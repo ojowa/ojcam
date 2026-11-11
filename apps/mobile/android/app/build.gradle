@@ -86,6 +86,10 @@ android {
     compileSdkVersion rootProject.ext.compileSdkVersion
 
     namespace 'com.ojowacam.mobile'
+    buildFeatures {
+        buildConfig true
+        resValues true
+    }
     defaultConfig {
         applicationId 'com.ojowacam.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
@@ -113,7 +117,7 @@ android {
             signingConfig signingConfigs.debug
             shrinkResources (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
             minifyEnabled enableProguardInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
 }

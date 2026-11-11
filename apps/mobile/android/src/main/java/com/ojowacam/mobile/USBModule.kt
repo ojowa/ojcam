@@ -87,8 +87,8 @@ class USBModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
+    override fun invalidate() {
+        super.invalidate()
     }
 
 }

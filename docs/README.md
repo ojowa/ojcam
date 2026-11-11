@@ -14,7 +14,9 @@ Professional-grade application that turns your smartphone into a high-quality wi
 
 ## Getting Started
 - Follow the `ROADMAP.md` for the development plan.
-- See `ARCHITECTURE.md` for the system design.
+- See `architecture/ARCHITECTURE.md` for the system design.
+- See `development/BUILD_AND_RUN.md` to build the mobile app and OBS plugin and run them together.
+- See `protocols/PROTOCOL.md` for the wire protocol (pairing, session auth, heartbeat).
 ## Features
 
 ### Core Features

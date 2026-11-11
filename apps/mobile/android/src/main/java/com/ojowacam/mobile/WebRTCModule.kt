@@ -102,8 +102,8 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             }
             config.iceTransportsType = PeerConnection.IceTransportsType.ALL
             val pcConstraints = MediaConstraints()
-            pcConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveAudio", "true"))
-            pcConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveVideo", "false"))
+            pcConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            pcConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "false"))
             peerConnection = factory.createPeerConnection(config, pcConstraints, object : PeerConnection.Observer {
                 override fun onSignalingChange(newState: PeerConnection.SignalingState) {
                     Log.d(TAG, "Signaling state: $newState")
@@ -210,21 +210,21 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         try {
             val pc = peerConnection ?: throw Exception("No peer connection")
             val sdpConstraints = MediaConstraints()
-            sdpConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveAudio", "true"))
-            sdpConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveVideo", "false"))
+            sdpConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            sdpConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "false"))
             pc.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(sessionDescription: SessionDescription) {
                     pc.setLocalDescription(object : SdpObserver {
                         override fun onCreateSuccess(s: SessionDescription) {}
                         override fun onSetSuccess() {
                             Log.d(TAG, "Local description set")
-                            emitLocalSdp(sessionDescription.type.canonicalString(), sessionDescription.description)
+                            emitLocalSdp(sessionDescription.type.canonicalForm(), sessionDescription.description)
                         }
                         override fun onSetFailure(s: String) {
                             Log.e(TAG, "Failed to set local description: $s")
-                            emitLocalSdp(sessionDescription.type.canonicalString(), sessionDescription.description)
+                            emitLocalSdp(sessionDescription.type.canonicalForm(), sessionDescription.description)
                         }
-                        override fun onFailure(s: String) { Log.e(TAG, "Create offer failed: $s") }
+                        override fun onCreateFailure(s: String) { Log.e(TAG, "Create offer failed: $s") }
                     }, sessionDescription)
                 }
                 override fun onSetSuccess() {}
@@ -232,7 +232,7 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                     Log.e(TAG, "Set local description failed: $s")
                     promise.reject("WEBRTC_SET_LOCAL_ERROR", s, null)
                 }
-                override fun onFailure(s: String) {
+                override fun onCreateFailure(s: String) {
                     Log.e(TAG, "Create offer failed: $s")
                     promise.reject("WEBRTC_OFFER_ERROR", s, null)
                 }
@@ -252,7 +252,7 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 override fun onCreateSuccess(s: SessionDescription) {}
                 override fun onSetSuccess() { Log.d(TAG, "Remote description set") }
                 override fun onSetFailure(s: String) { Log.e(TAG, "Failed to set remote description: $s") }
-                override fun onFailure(s: String) { Log.e(TAG, "Set remote description failed: $s") }
+                override fun onCreateFailure(s: String) { Log.e(TAG, "Set remote description failed: $s") }
             }, sessionDescription)
             promise.resolve(true)
         } catch (e: Exception) {

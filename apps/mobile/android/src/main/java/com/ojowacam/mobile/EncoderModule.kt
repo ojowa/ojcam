@@ -134,9 +134,9 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         return if (start > 0) data.copyOfRange(start, data.size) else data
     }
 
-    override fun onDestroy() {
+    override fun invalidate() {
         releaseEncoderInternal()
-        super.onDestroy()
+        super.invalidate()
     }
 
 }

@@ -77,16 +77,20 @@ class AudioModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     @ReactMethod
     fun stopRecording(promise: Promise) {
         try {
-            isRecording = false
-            audioRecord?.stop()
-            audioRecord?.release()
-            audioRecord = null
-            audioThread?.interrupt()
-            audioThread = null
+            stopRecordingInternal()
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("STOP_AUDIO_ERROR", e.message, e)
         }
+    }
+
+    private fun stopRecordingInternal() {
+        isRecording = false
+        audioRecord?.stop()
+        audioRecord?.release()
+        audioRecord = null
+        audioThread?.interrupt()
+        audioThread = null
     }
 
     @ReactMethod
@@ -106,9 +110,13 @@ class AudioModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
 
     fun isRecording(): Boolean = isRecording
 
-    override fun onDestroy() {
-        stopRecording(com.facebook.react.bridge.Promise() { _, _ -> })
-        super.onDestroy()
+    override fun invalidate() {
+        try {
+            stopRecordingInternal()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop audio recording during teardown", e)
+        }
+        super.invalidate()
     }
 
 }
