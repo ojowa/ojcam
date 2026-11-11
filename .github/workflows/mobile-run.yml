@@ -1,9 +1,7 @@
 name: Android Emulator Test
 
 on:
-  workflow_run:
-    workflows: ["Android Build"]
-    types: [completed]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

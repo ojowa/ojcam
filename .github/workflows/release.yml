@@ -1,18 +1,7 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows:
-      - Android Build
-      - Windows Desktop Build
-      - macOS Desktop Build
-      - iOS Build
-      - C++ Streaming Core Build
-      - OBS Plugin Build - Windows
-      - OBS Plugin Build - macOS
-      - OBS Plugin Build - Linux
-      - Dependency Security Scan
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read

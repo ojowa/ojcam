@@ -1,11 +1,7 @@
 name: C++ Streaming Core Build
 
 on:
-  push:
-    branches: [main]
-    tags: ['*']
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
