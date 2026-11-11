@@ -52,6 +52,11 @@
     "react-native-safe-area-context": "4.8.2"
   },
   "expo": {
+    "autolinking": {
+      "exclude": [
+        "@sentry/react-native"
+      ]
+    },
     "doctor": {
       "appConfigFieldsNotSyncedCheck": {
         "enabled": false
