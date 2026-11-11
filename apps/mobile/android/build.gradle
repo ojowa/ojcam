@@ -1,11 +1,11 @@
 buildscript {
     ext {
-        buildToolsVersion = "36.0.0"
+        buildToolsVersion = "34.0.0"
         minSdkVersion = 24
         compileSdkVersion = 34
         targetSdkVersion = 34
-        ndkVersion = "27.0.12077973"
-        kotlinVersion = "2.2.10"
+        ndkVersion = "25.1.8937393"
+        kotlinVersion = "1.8.10"
         frescoVersion = "3.1.0"
     }
     repositories {
@@ -13,7 +13,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:9.0.1")
+        classpath("com.android.tools.build:gradle:8.1.1")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${kotlinVersion}")
     }
@@ -26,26 +26,6 @@ allprojects {
         maven {
             // expo-camera bundles a custom com.google.android:cameraview
             url "$rootDir/../node_modules/expo-camera/android/maven"
-        }
-    }
-}
-
-// AGP 9 requires every library module to declare compileSdk itself. Legacy
-// expo modules (SDK 49 era) skip that when expoProvidesDefaultConfig is true,
-// so fill in any missing SDK versions from the root ext values.
-subprojects { sub ->
-    sub.plugins.withId("com.android.library") {
-        def androidExt = sub.extensions.findByName("android")
-        if (androidExt != null) {
-            if (androidExt.compileSdk == null) {
-                androidExt.compileSdk = rootProject.ext.compileSdkVersion
-            }
-            if (androidExt.defaultConfig.minSdk == null) {
-                androidExt.defaultConfig.minSdk = rootProject.ext.minSdkVersion
-            }
-            if (androidExt.defaultConfig.targetSdk == null) {
-                androidExt.defaultConfig.targetSdk = rootProject.ext.targetSdkVersion
-            }
         }
     }
 }
