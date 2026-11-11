@@ -67,6 +67,7 @@ pnpm-debug.log*
 # Misc
 *.lock
 package-lock.json
+!apps/mobile/package-lock.json
 yarn.lock
 .pnpm-store/
 
