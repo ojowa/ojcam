@@ -1,19 +1,18 @@
 /**
  * ConnectionConfig.ts
  *
- * Single source of truth for the signaling server endpoint.
- * Host is user-configurable (desktop LAN IP on physical devices;
- * localhost only for emulator/simulator).
+ * Single source of truth for the signaling endpoint. The phone hosts the
+ * WebSocket server, so only the listen port is configurable; OBS dials in
+ * at the phone's LAN IP (shown in the UI).
  */
 
 import * as SecureStore from 'expo-secure-store';
 
-const STORAGE_KEY = 'ojowacam.signaling.host';
-const DEFAULT_HOST = 'localhost';
-const DEFAULT_PORT = 8080;
+const STORAGE_KEY = 'ojowacam.signaling.port';
+const DEFAULT_PORT = 8765;
+const DEFAULT_HOST = '0.0.0.0';
 
 export class ConnectionConfig {
-  private host = DEFAULT_HOST;
   private port = DEFAULT_PORT;
   private loaded = false;
 
@@ -22,7 +21,10 @@ export class ConnectionConfig {
     try {
       const stored = await SecureStore.getItemAsync(STORAGE_KEY);
       if (stored && stored.trim()) {
-        this.host = stored.trim();
+        const parsed = parseInt(stored.trim(), 10);
+        if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) {
+          this.port = parsed;
+        }
       }
     } catch {
       // Keep default if storage unavailable.
@@ -30,48 +32,34 @@ export class ConnectionConfig {
     this.loaded = true;
   }
 
-  getHost(): string {
-    return this.host;
-  }
-
   getPort(): number {
     return this.port;
   }
 
   getSignalingUrl(): string {
-    const host = this.host || DEFAULT_HOST;
-    return `ws://${host}:${this.port}`;
+    return `ws://${DEFAULT_HOST}:${this.port}`;
   }
 
-  isDefaultLocalhost(): boolean {
-    return this.host === DEFAULT_HOST || this.host === '127.0.0.1' || this.host === '::1';
+  isDefaultPort(): boolean {
+    return this.port === DEFAULT_PORT;
   }
 
-  async setHost(host: string): Promise<string> {
-    const trimmed = host.trim();
-    if (!trimmed) {
-      throw new Error('Host cannot be empty');
+  async setPort(port: number): Promise<string> {
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new Error('Port must be an integer between 1 and 65535');
     }
-    // Strip accidental scheme/path if user pasted a full URL.
-    let normalized = trimmed
-      .replace(/^wss?:\/\//i, '')
-      .replace(/\/.*$/, '')
-      .replace(/:\d+$/, '');
-    if (!normalized) {
-      throw new Error('Invalid host');
-    }
-    this.host = normalized;
+    this.port = port;
     this.loaded = true;
     try {
-      await SecureStore.setItemAsync(STORAGE_KEY, normalized);
+      await SecureStore.setItemAsync(STORAGE_KEY, String(port));
     } catch {
       // In-memory only if storage fails.
     }
     return this.getSignalingUrl();
   }
 
-  async resetHost(): Promise<string> {
-    this.host = DEFAULT_HOST;
+  async resetPort(): Promise<string> {
+    this.port = DEFAULT_PORT;
     try {
       await SecureStore.deleteItemAsync(STORAGE_KEY);
     } catch {

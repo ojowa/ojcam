@@ -127,14 +127,14 @@ DroidCam's PC client discovers the phone automatically:
 ### Sequence (from existing `StreamReceiver`)
 ```
 1. obs_source_create() → StreamReceiver constructed
-2. StreamReceiver::connect(device_id, signaling_url)
-   ├── WebRTCTransport::connect(signaling_url)
-   ├── WebRTCTransport::createOffer()
-   ├── onVideoFrame → StreamSynchronizer::pushVideoFrame
-   └── onAudioFrame → StreamSynchronizer::pushAudioFrame
-3. VideoDecoder::onFrameDecoded → (TODO) push to OBS video source
-4. AudioDecoder::onFrameDecoded → (TODO) push to OBS audio source
-5. disconnect() → transport.disconnect()
+2. StreamReceiver::setPairingCode(code) + connect(device_id, signaling_url)
+   ├── WebRTCTransport::connect(signaling_url)   // phone hosts the server
+   ├── phone sends PAIRING_REQUEST → OBS replies PAIRING_RESPONSE (strict code match)
+   ├── phone sends OFFER → OBS setRemoteDescription + answers (ANSWER)
+   ├── onVideoFrame → decode → StreamReceiver::pushVideoFrameToOBS
+   └── onAudioFrame → pushAudioFrameToOBS
+3. Heartbeat: phone PING every 15 s → OBS PONG
+4. disconnect() → transport.disconnect()
 ```
 
 ### DroidCam precedent

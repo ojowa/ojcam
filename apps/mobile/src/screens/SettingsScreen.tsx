@@ -4,36 +4,38 @@ import { StatusBar } from 'expo-status-bar';
 import { connectionConfig } from '../services/config/ConnectionConfig';
 
 export default function SettingsScreen() {
-  const [host, setHost] = React.useState('');
+  const [port, setPort] = React.useState('');
   const [endpoint, setEndpoint] = React.useState('');
   const [saving, setSaving] = React.useState(false);
 
   React.useEffect(() => {
     void (async () => {
       await connectionConfig.load();
-      setHost(connectionConfig.getHost());
+      setPort(String(connectionConfig.getPort()));
       setEndpoint(connectionConfig.getSignalingUrl());
     })();
   }, []);
 
-  const saveHost = async () => {
+  const savePort = async () => {
     if (saving) return;
     setSaving(true);
     try {
-      const url = await connectionConfig.setHost(host);
+      const parsed = parseInt(port.trim(), 10);
+      if (!Number.isInteger(parsed)) throw new Error('Enter a valid port number');
+      const url = await connectionConfig.setPort(parsed);
       setEndpoint(url);
-      setHost(connectionConfig.getHost());
-      Alert.alert('Saved', `Signaling endpoint set to ${url}`);
+      setPort(String(connectionConfig.getPort()));
+      Alert.alert('Saved', `Signaling server listening on ${url}`);
     } catch (error) {
-      Alert.alert('Invalid Host', error instanceof Error ? error.message : 'Unable to save host.');
+      Alert.alert('Invalid Port', error instanceof Error ? error.message : 'Unable to save port.');
     } finally {
       setSaving(false);
     }
   };
 
-  const resetHost = async () => {
-    const url = await connectionConfig.resetHost();
-    setHost(connectionConfig.getHost());
+  const resetPort = async () => {
+    const url = await connectionConfig.resetPort();
+    setPort(String(connectionConfig.getPort()));
     setEndpoint(url);
   };
 
@@ -45,26 +47,28 @@ export default function SettingsScreen() {
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Signaling Server</Text>
-        <Text style={styles.fieldLabel}>Desktop host / IP</Text>
+        <Text style={styles.fieldLabel}>Listen port</Text>
         <TextInput
           style={styles.input}
-          value={host}
-          onChangeText={setHost}
-          placeholder="e.g. 192.168.1.20"
+          value={port}
+          onChangeText={setPort}
+          placeholder="8765"
           placeholderTextColor="#999"
           autoCapitalize="none"
           autoCorrect={false}
-          keyboardType="url"
+          keyboardType="number-pad"
         />
         <Text style={styles.hint}>
-          On a physical phone, use your computer&apos;s LAN IP. localhost only works in an emulator.
+          The phone hosts the signaling server on this port. Set the OBS
+          signaling URL to ws://&lt;phone-ip&gt;:&lt;port&gt; (shown on the
+          Connection screen).
         </Text>
         <Text style={styles.endpoint}>Active: {endpoint}</Text>
-        <TouchableOpacity style={styles.button} onPress={saveHost} disabled={saving}>
-          <Text style={styles.buttonText}>{saving ? 'Saving…' : 'Save Host'}</Text>
+        <TouchableOpacity style={styles.button} onPress={savePort} disabled={saving}>
+          <Text style={styles.buttonText}>{saving ? 'Saving…' : 'Save Port'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.buttonOutline} onPress={() => void resetHost()}>
-          <Text style={styles.buttonOutlineText}>Reset to localhost</Text>
+        <TouchableOpacity style={styles.buttonOutline} onPress={() => void resetPort()}>
+          <Text style={styles.buttonOutlineText}>Reset to default (8765)</Text>
         </TouchableOpacity>
       </View>
 

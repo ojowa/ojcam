@@ -6,6 +6,7 @@
 import { pairingService } from '../services/security/PairingService';
 import { deviceIdentity } from '../services/security/DeviceIdentity';
 import { setStorageAdapter } from '../services/security/DeviceIdentity';
+import { defaultPairingRateLimiter } from '../services/security/RateLimiter';
 
 const mockStorage = new Map<string, string>();
 
@@ -29,6 +30,7 @@ beforeEach(() => {
 describe('PairingService', () => {
   beforeEach(async () => {
     await deviceIdentity.initialize();
+    defaultPairingRateLimiter.reset(deviceIdentity.getDeviceId());
   });
 
   it('should generate a pairing code and QR payload', async () => {

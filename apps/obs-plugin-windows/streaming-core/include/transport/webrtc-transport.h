@@ -16,14 +16,25 @@ public:
     bool sendAudioFrame(const AudioFrame& frame) override;
     bool isConnected() const override;
 
-    void createOffer();
+    // Pairing: the source's configured pairing code must match the phone's
+    // PAIRING_REQUEST or the request is rejected.
+    void setPairingCode(const std::string& pairing_code);
+
     void setRemoteDescription(const std::string& type, const std::string& sdp);
     void addIceCandidate(const std::string& candidate);
 
 private:
     void handleSignalingMessage(const std::string& message);
+    void handlePairingRequest(const std::string& message);
+    bool sessionAuthorized(const std::string& message);
+    void sendSignalingError(const std::string& error_message);
+    void sendAnswer();
+    void sendStartSessionAck(const std::string& session_id);
+    void sendPong();
     static std::string extractJsonField(const std::string& json, const std::string& field);
     static std::string escapeJson(const std::string& input);
+    static std::string unescapeJson(const std::string& input);
+    static std::string generateSessionToken();
 
     struct Impl;
     Impl* impl_;

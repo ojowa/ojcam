@@ -1,5 +1,7 @@
-import { deviceIdentity, type SignedPayload } from './DeviceIdentity';
+import { deviceIdentity } from './DeviceIdentity';
 import { pairingService } from './PairingService';
+
+const SESSION_BOUND_TYPES = ['OFFER', 'ANSWER', 'ICE_CANDIDATE', 'START_SESSION'];
 
 export interface SessionInfo {
   token: string;
@@ -44,37 +46,21 @@ export class AuthService {
     return session;
   }
 
-  async signMessage(message: Record<string, unknown>): Promise<SignedPayload> {
-    const session = this.getSession();
-    if (!session) {
-      this.onAuthenticationRequired?.();
-      throw new Error('No active session. Pairing required.');
-    }
-    const payload = JSON.stringify({ ...message, deviceId: session.deviceId, sessionToken: session.token, timestamp: Date.now() });
-    return deviceIdentity.signPayload(payload);
-  }
-
   async authenticateMessage(message: Record<string, unknown>): Promise<Record<string, unknown>> {
     const session = this.getSession();
     if (!session) return { ...message, authenticated: false };
-    const signed = await this.signMessage(message);
-    return { ...message, deviceId: session.deviceId, sessionToken: session.token, signature: signed.signature, signatureAlgorithm: signed.algorithm, timestamp: Date.now(), authenticated: true };
+    return { ...message, deviceId: session.deviceId, sessionToken: session.token, timestamp: Date.now(), authenticated: true };
   }
 
-  async validateIncomingMessage(message: Record<string, unknown>, desktopPublicKey?: string): Promise<{ valid: boolean; reason?: string }> {
+  async validateIncomingMessage(message: Record<string, unknown>): Promise<{ valid: boolean; reason?: string }> {
+    if (!SESSION_BOUND_TYPES.includes(String(message.type))) return { valid: true };
     const session = this.getSession();
     if (!session) return { valid: false, reason: 'No active session' };
     if (message.sessionToken !== session.token) return { valid: false, reason: 'Session token missing or mismatched' };
-    const key = desktopPublicKey || session.desktopPublicKey;
     if (typeof message.timestamp !== 'number' || Math.abs(Date.now() - message.timestamp) > 5 * 60_000) {
       return { valid: false, reason: 'Message timestamp is missing or expired' };
     }
-    if (!key || typeof message.signature !== 'string') {
-      return { valid: false, reason: 'Missing desktop signature, key, or timestamp' };
-    }
-    const payload = JSON.stringify({ type: message.type, sessionId: message.sessionId, timestamp: message.timestamp });
-    const verified = await deviceIdentity.verifySignature(payload, message.signature, key);
-    return verified ? { valid: true } : { valid: false, reason: 'Invalid desktop signature' };
+    return { valid: true };
   }
 
   expireSession(): void {

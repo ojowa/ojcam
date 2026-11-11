@@ -4,13 +4,16 @@ import { StatusBar } from 'expo-status-bar';
 import { USBService } from '../services/usb/USBService';
 import { streamingService } from '../services/StreamingService';
 import { connectionConfig } from '../services/config/ConnectionConfig';
+import * as Network from 'expo-network';
 
 export default function ConnectionScreen() {
   const [connectionMode, setConnectionMode] = React.useState<'wifi' | 'usb'>('wifi');
   const [usbDevices, setUSBDevices] = React.useState<Array<{id: string; name: string; type: string}>>([]);
   const [isUsbConnected, setIsUsbConnected] = React.useState(false);
-  const [wifiStatus, setWifiStatus] = React.useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [signalingHost, setSignalingHost] = React.useState('');
+  const [connecting, setConnecting] = React.useState(false);
+  const [serverRunning, setServerRunning] = React.useState(false);
+  const [peerConnected, setPeerConnected] = React.useState(false);
+  const [localIp, setLocalIp] = React.useState('');
   const [signalingUrl, setSignalingUrl] = React.useState('');
   const [pairingCode, setPairingCode] = React.useState<string | null>(null);
   const [pairingBusy, setPairingBusy] = React.useState(false);
@@ -25,7 +28,7 @@ export default function ConnectionScreen() {
       if (cancelled) return;
       setPairingCode(state.pairingCode);
       setIsPaired(state.isPaired);
-      setWifiStatus(state.isConnected ? 'connected' : 'disconnected');
+      setPeerConnected(state.isConnected);
       if (state.isConnected) setConnectionError(null);
       else if (state.error && !state.pairingCode) setConnectionError(state.error);
     };
@@ -34,8 +37,13 @@ export default function ConnectionScreen() {
     void (async () => {
       await connectionConfig.load();
       if (cancelled) return;
-      setSignalingHost(connectionConfig.getHost());
       setSignalingUrl(connectionConfig.getSignalingUrl());
+      try {
+        const ip = await Network.getIpAddressAsync();
+        if (!cancelled && ip && ip !== '0.0.0.0') setLocalIp(ip);
+      } catch {
+        // Leave blank if the IP cannot be determined.
+      }
     })();
     return () => {
       cancelled = true;
@@ -74,33 +82,40 @@ export default function ConnectionScreen() {
   };
 
   const connectWiFi = async () => {
-    if (wifiStatus === 'connecting') return;
-    setWifiStatus('connecting');
+    if (connecting || serverRunning) return;
+    setConnecting(true);
     setConnectionError(null);
     try {
-      const host = signalingHost.trim();
-      const url = await streamingService.connectSignaling(host || undefined);
+      const url = await streamingService.connectSignaling();
       setSignalingUrl(url);
-      setSignalingHost(connectionConfig.getHost());
-      setWifiStatus('connected');
+      try {
+        const ip = await Network.getIpAddressAsync();
+        if (ip && ip !== '0.0.0.0') setLocalIp(ip);
+      } catch {
+        // Keep any previously fetched IP.
+      }
+      setServerRunning(true);
     } catch (error) {
-      setWifiStatus('disconnected');
-      const message = error instanceof Error ? error.message : 'Unable to reach the signaling server.';
+      setServerRunning(false);
+      const message = error instanceof Error ? error.message : 'Unable to start the signaling server.';
       setConnectionError(message);
       Alert.alert('Wi-Fi Connection Failed', message);
+    } finally {
+      setConnecting(false);
     }
   };
 
   const disconnectWiFi = async () => {
     await streamingService.disconnectSignaling();
-    setWifiStatus('disconnected');
+    setServerRunning(false);
+    setPeerConnected(false);
     setConnectionError(null);
   };
 
   const handleShowPairing = async () => {
     if (pairingBusy) return;
-    if (wifiStatus !== 'connected') {
-      Alert.alert('Not Connected', 'Connect to the signaling server first.');
+    if (!serverRunning) {
+      Alert.alert('Server Not Started', 'Start the signaling server first.');
       return;
     }
     setPairingBusy(true);
@@ -125,8 +140,8 @@ export default function ConnectionScreen() {
       Alert.alert('Missing Code', 'Enter the pairing code shown on your desktop.');
       return;
     }
-    if (wifiStatus !== 'connected') {
-      Alert.alert('Not Connected', 'Connect to the signaling server first.');
+    if (!serverRunning) {
+      Alert.alert('Server Not Started', 'Start the signaling server first.');
       return;
     }
     setPairingBusy(true);
@@ -185,48 +200,38 @@ export default function ConnectionScreen() {
       {connectionMode === 'wifi' && (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Wi-Fi Connection</Text>
-          <Text style={styles.fieldLabel}>Desktop host</Text>
-          <TextInput
-            style={styles.hostInput}
-            value={signalingHost}
-            onChangeText={setSignalingHost}
-            placeholder="e.g. 192.168.1.20 (desktop LAN IP)"
-            placeholderTextColor="#999"
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            editable={wifiStatus !== 'connected'}
-          />
-          <Text style={styles.hostHint}>
-            Use your computer&apos;s LAN IP on a physical device. localhost only works in an emulator.
+          <Text style={styles.fieldLabel}>Phone address (set this in OBS)</Text>
+          <Text style={styles.hostUrl}>
+            {localIp && signalingUrl
+              ? signalingUrl.replace('0.0.0.0', localIp)
+              : signalingUrl || 'ws://0.0.0.0:8765'}
           </Text>
-          {signalingUrl ? (
-            <Text style={styles.hostUrl}>Endpoint: {signalingUrl}</Text>
-          ) : null}
+          <Text style={styles.hostHint}>
+            The phone hosts the signaling server. Open the Ojowacam source in
+            OBS Studio and enter the URL above, then connect here.
+          </Text>
           <View style={styles.statusRow}>
-            <View style={[styles.statusDot, wifiStatus === 'connected' && styles.statusDotConnected]} />
+            <View style={[styles.statusDot, (serverRunning || peerConnected) && styles.statusDotConnected]} />
             <Text>
-              {wifiStatus === 'connected'
-                ? 'Connected'
-                : wifiStatus === 'connecting'
-                  ? 'Connecting...'
-                  : 'Disconnected'}
+              {connecting
+                ? 'Starting…'
+                : peerConnected
+                  ? 'Connected'
+                  : serverRunning
+                    ? 'Waiting for OBS…'
+                    : 'Stopped'}
             </Text>
           </View>
-          {connectionError && wifiStatus !== 'connected' ? (
+          {connectionError && !peerConnected ? (
             <Text style={styles.connectionError}>{connectionError}</Text>
           ) : null}
           <TouchableOpacity
-            style={[styles.button, wifiStatus === 'connecting' && styles.buttonDisabled]}
-            onPress={wifiStatus === 'connected' ? disconnectWiFi : connectWiFi}
-            disabled={wifiStatus === 'connecting'}
+            style={[styles.button, connecting && styles.buttonDisabled]}
+            onPress={serverRunning ? disconnectWiFi : connectWiFi}
+            disabled={connecting}
           >
             <Text style={styles.buttonText}>
-              {wifiStatus === 'connected'
-                ? 'Disconnect'
-                : wifiStatus === 'connecting'
-                  ? 'Connecting…'
-                  : 'Connect'}
+              {serverRunning ? 'Stop Server' : connecting ? 'Starting…' : 'Start Server'}
             </Text>
           </TouchableOpacity>
         </View>

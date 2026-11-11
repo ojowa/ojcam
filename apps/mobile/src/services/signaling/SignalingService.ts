@@ -1,4 +1,4 @@
-import { WebSocketTransport, defaultTransportConfig, type TransportState } from './WebSocketTransport';
+import { SignalingServer, defaultTransportConfig, type TransportState } from './SignalingServer';
 import { authService } from '../security/AuthService';
 import { pairingService, type PairingQRPayload } from '../security/PairingService';
 import { deviceIdentity } from '../security/DeviceIdentity';
@@ -28,13 +28,15 @@ export const defaultSignalingConfig: SignalingConfig = {
 
 export class SignalingService {
   private config: SignalingConfig;
-  private transport: WebSocketTransport;
+  private transport: SignalingServer;
   private handlers: SignalingEventHandlers = {};
   private isInitializing = false;
+  private pairingRetryTimer: ReturnType<typeof setInterval> | null = null;
+  private lastPairingRequest: Record<string, unknown> | null = null;
 
   constructor(config: SignalingConfig = defaultSignalingConfig) {
     this.config = { ...config };
-    this.transport = new WebSocketTransport({ ...defaultTransportConfig, url: config.serverUrl });
+    this.transport = new SignalingServer({ ...defaultTransportConfig, url: config.serverUrl });
     this.transport.setOnMessage(data => { void this.handleIncomingMessage(data); });
     this.transport.setOnStateChange(state => this.handleStateChange(state));
     this.transport.setOnError(err => this.handlers.onError?.(err));
@@ -64,8 +66,8 @@ export class SignalingService {
   setServerUrl(url: string): void { this.config.serverUrl = url; this.transport.setUrl(url); }
   getServerUrl(): string { return this.config.serverUrl; }
   async sendReliable(data: string): Promise<boolean> { return this.transport.sendReliable(data); }
-  async sendStartSession(payload: string): Promise<boolean> {
-    const message = await authService.authenticateMessage({ type: 'START_SESSION', payload, deviceId: deviceIdentity.getDeviceId() });
+  async sendStartSession(payload: string, sessionId?: string): Promise<boolean> {
+    const message = await authService.authenticateMessage({ type: 'START_SESSION', sessionId, payload, deviceId: deviceIdentity.getDeviceId() });
     return this.transport.sendReliable(JSON.stringify(message));
   }
   async sendOffer(sdp: string, sdpType: string, sessionId?: string): Promise<void> { await this.sendAuthenticated({ type: 'OFFER', sdp, sdpType, sessionId, deviceId: deviceIdentity.getDeviceId() }); }
@@ -81,24 +83,38 @@ export class SignalingService {
   }
   async requestPairing(): Promise<{ code: string; qrPayload: PairingQRPayload }> {
     const result = await pairingService.generatePairingCode(this.config.deviceName);
-    if (this.transport.isConnected()) {
-      this.transport.send(JSON.stringify({ type: 'PAIRING_REQUEST', deviceId: deviceIdentity.getDeviceId(), pairingCode: result.code.code, qrPayload: result.qrPayload }));
-    }
+    this.sendPairingRequest({ type: 'PAIRING_REQUEST', deviceId: deviceIdentity.getDeviceId(), pairingCode: result.code.code, qrPayload: result.qrPayload });
     return { code: result.code.code, qrPayload: result.qrPayload };
   }
   async submitPairingCode(pairingCode: string): Promise<void> {
     pairingService.adoptPairingCode(pairingCode);
-    if (this.transport.isConnected()) {
-      this.transport.send(JSON.stringify({
-        type: 'PAIRING_REQUEST',
-        deviceId: deviceIdentity.getDeviceId(),
-        pairingCode,
-      }));
-    } else {
-      throw new Error('Not connected to signaling server');
-    }
+    this.sendPairingRequest({
+      type: 'PAIRING_REQUEST',
+      deviceId: deviceIdentity.getDeviceId(),
+      pairingCode,
+    });
   }
-  disconnect(): void { this.transport.disconnect(); authService.expireSession(); }
+  disconnect(): void {
+    this.stopPairingRetry();
+    this.lastPairingRequest = null;
+    this.transport.disconnect();
+    authService.expireSession();
+  }
+
+  private sendPairingRequest(payload: Record<string, unknown>): void {
+    this.lastPairingRequest = payload;
+    this.transport.send(JSON.stringify(payload));
+    this.stopPairingRetry();
+    this.pairingRetryTimer = setInterval(() => {
+      if (this.transport.isConnected() && this.lastPairingRequest) {
+        this.transport.send(JSON.stringify(this.lastPairingRequest));
+      }
+    }, 5000);
+  }
+  private stopPairingRetry(): void {
+    if (this.pairingRetryTimer) clearInterval(this.pairingRetryTimer);
+    this.pairingRetryTimer = null;
+  }
 
   private async handleIncomingMessage(data: string): Promise<void> {
     let message: SignalingMessage;
@@ -114,16 +130,22 @@ export class SignalingService {
       const result = await pairingService.handlePairingResponse({
         deviceId: message.deviceId || '', pairingCode: message.pairingCode || '', sessionToken: message.sessionToken,
         success: message.success === true, errorMessage: message.errorMessage,
-        signature: message.signature, signerPublicKey: message.signerPublicKey,
       });
-      if (result.success && result.sessionToken && message.signerPublicKey) {
-        await authService.establishSession(result.sessionToken, message.signerPublicKey);
+      if (result.success && result.sessionToken) {
+        await authService.establishSession(result.sessionToken);
+        this.stopPairingRetry();
+        this.lastPairingRequest = null;
       }
       this.handlers.onPairingCompleted?.(result.success, result.sessionToken, result.errorMessage);
       return;
     }
-    if (message.type === 'PAIRING_ERROR' || message.type === 'ERROR') {
-      this.handlers.onPairingCompleted?.(false, undefined, message.errorMessage); return;
+    if (message.type === 'PAIRING_ERROR') {
+      this.handlers.onPairingCompleted?.(false, undefined, message.errorMessage);
+      return;
+    }
+    if (message.type === 'ERROR') {
+      this.handlers.onError?.(new Error(message.errorMessage || 'Signaling error'));
+      return;
     }
     const validation = await authService.validateIncomingMessage(message as unknown as Record<string, unknown>);
     if (!validation.valid) { console.warn('Rejected signaling message:', validation.reason); return; }

@@ -73,7 +73,8 @@ describe('AuthService', () => {
     expect(authenticated.authenticated).toBe(true);
     expect(authenticated.deviceId).toBe(deviceIdentity.getDeviceId());
     expect(authenticated.sessionToken).toBe('test-token');
-    expect(authenticated.signature).toBeDefined();
+    expect(authenticated.timestamp).toBeDefined();
+    expect(authenticated.signature).toBeUndefined();
   });
 
   it('should return unauthenticated message when no session', async () => {
@@ -84,7 +85,21 @@ describe('AuthService', () => {
 
   it('should validate incoming messages with valid session', async () => {
     await authService.establishSession('test-token');
-    const message = { type: 'ANSWER', sessionToken: 'test-token' };
+    const message = { type: 'ANSWER', sessionToken: 'test-token', timestamp: Date.now() };
+    const result = await authService.validateIncomingMessage(message);
+    expect(result.valid).toBe(true);
+  });
+
+  it('should reject messages with stale timestamps', async () => {
+    await authService.establishSession('test-token');
+    const message = { type: 'ANSWER', sessionToken: 'test-token', timestamp: Date.now() - 6 * 60_000 };
+    const result = await authService.validateIncomingMessage(message);
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('timestamp');
+  });
+
+  it('should not require session binding for non-session message types', async () => {
+    const message = { type: 'DEVICE_ANNOUNCEMENT', deviceId: 'other' };
     const result = await authService.validateIncomingMessage(message);
     expect(result.valid).toBe(true);
   });

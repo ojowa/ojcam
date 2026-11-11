@@ -151,8 +151,6 @@ export class PairingService {
     sessionToken?: string;
     success: boolean;
     errorMessage?: string;
-    signature?: string;
-    signerPublicKey?: string;
   }): Promise<PairingResult> {
     const matchingCode = response.pairingCode;
     const activePairing = this.pendingPairings.get(matchingCode);
@@ -179,17 +177,10 @@ export class PairingService {
       };
     }
 
-    if (!response.sessionToken || !response.signature || !response.signerPublicKey) {
+    if (!response.sessionToken) {
       pairing.resolved = true;
       this.pendingPairings.delete(matchingCode);
-      return { success: false, errorMessage: 'Pairing response is missing its token or desktop signature' };
-    }
-    const payload = JSON.stringify({ deviceId: response.deviceId, pairingCode: response.pairingCode, sessionToken: response.sessionToken, success: true });
-    const verified = await deviceIdentity.verifySignature(payload, response.signature, response.signerPublicKey);
-    if (!verified) {
-      pairing.resolved = true;
-      this.pendingPairings.delete(matchingCode);
-      return { success: false, errorMessage: 'Invalid desktop signature' };
+      return { success: false, errorMessage: 'Pairing response is missing its session token' };
     }
 
     pairing.resolved = true;

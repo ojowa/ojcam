@@ -19,6 +19,9 @@ public:
     bool connect(const std::string& device_id, const std::string& signaling_url);
     void disconnect();
 
+    // Pairing code the phone's PAIRING_REQUEST must match (before connect).
+    void setPairingCode(const std::string& pairing_code);
+
     void setVideoSource(obs_source_t* source);
     void setAudioSource(obs_source_t* source);
 
@@ -26,6 +29,9 @@ public:
 
 private:
     void scheduleReconnect();
+    void reconnectWorker(std::string device_id, std::string signaling_url);
+    void finishReconnectWorker();
+    void cancelReconnectAndWait();
     void pushVideoFrameToOBS(const VideoFrame& frame);
     void pushAudioFrameToOBS(const AudioFrame& frame);
 

@@ -3,7 +3,7 @@
 #include <obs-module.h>
 #include <vector>
 #include <cstdint>
-#include "../streaming-core.h"
+#include <streaming-core.h>
 
 namespace ojowacam {
 
@@ -14,6 +14,10 @@ public:
 
     // Set the expected input pixel format
     void setFormat(VideoPixelFormat format) { current_format_ = format; }
+
+    // Convert decoded video frame to RGBA bytes (YUV420/NV12/RGBA aware)
+    bool convertToRgba(const std::vector<uint8_t>& data, int width, int height,
+                       std::vector<uint8_t>& out);
 
     // Convert decoded video frame to OBS texture
     gs_texture_t* convertToTexture(const std::vector<uint8_t>& data,

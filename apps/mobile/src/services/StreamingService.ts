@@ -162,14 +162,11 @@ export class StreamingService {
   }
 
   /**
-   * Connect to the signaling server at host (or current config if omitted).
-   * Returns the active signaling URL on success.
+   * Start the phone-hosted signaling server (or reuse it).
+   * Returns the local signaling URL on success.
    */
-  async connectSignaling(host?: string): Promise<string> {
+  async connectSignaling(): Promise<string> {
     await connectionConfig.load();
-    if (host !== undefined && host !== null && host.trim() !== '') {
-      await connectionConfig.setHost(host);
-    }
     const url = connectionConfig.getSignalingUrl();
     this.config.signalingUrl = url;
     signalingService.setServerUrl(url);
@@ -206,10 +203,6 @@ export class StreamingService {
 
   getSignalingUrl(): string {
     return connectionConfig.getSignalingUrl();
-  }
-
-  getSignalingHost(): string {
-    return connectionConfig.getHost();
   }
 
   get width(): number {
@@ -272,14 +265,11 @@ export class StreamingService {
     });
   }
 
-  async startStreaming(cameraId: string, config: StreamConfig, signalingUrl?: string): Promise<boolean> {
+  async startStreaming(cameraId: string, config: StreamConfig): Promise<boolean> {
     if (this.isStreaming) { console.warn('Already streaming'); return false; }
     try {
       this.state.error = null;
       await connectionConfig.load();
-      if (signalingUrl && signalingUrl.trim()) {
-        await connectionConfig.setHost(signalingUrl);
-      }
       this.config.signalingUrl = connectionConfig.getSignalingUrl();
       signalingService.setServerUrl(this.config.signalingUrl);
       if (!signalingService.isConnected()) {
@@ -323,9 +313,10 @@ export class StreamingService {
         resolution: config.resolution, fps: config.fps, codec: config.codec, bitrate: config.bitrate,
       };
       const audioConfig: AudioConfig = { codec: 'OPUS', sampleRate: 48000, channels: 2 };
-      const sessionMsg = createStartSession(`${deviceIdentity.getDeviceId()}-${Date.now()}`, videoConfig, audioConfig);
+      const sessionId = `${deviceIdentity.getDeviceId()}-${Date.now()}`;
+      const sessionMsg = createStartSession(sessionId, videoConfig, audioConfig);
       const sessionBase64 = encodeMessageBase64(sessionMsg as import('./protocol/messageTypes').StartSession);
-      const sent = await signalingService.sendStartSession(sessionBase64);
+      const sent = await signalingService.sendStartSession(sessionBase64, sessionId);
       if (!sent) throw new Error('Unable to send session configuration');
       this.isStreaming = true;
       this.state.isStreaming = true;

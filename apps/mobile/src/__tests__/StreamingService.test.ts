@@ -31,6 +31,7 @@ beforeEach(() => {
   (signalingService as any).transport = {
     connect: jest.fn().mockResolvedValue(undefined),
     disconnect: jest.fn(),
+    setUrl: jest.fn(),
     send: jest.fn().mockReturnValue(true),
     sendReliable: jest.fn().mockResolvedValue(true),
     isConnected: jest.fn().mockReturnValue(false),

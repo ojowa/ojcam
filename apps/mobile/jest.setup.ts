@@ -50,6 +50,11 @@ jest.mock('react-native', () => ({
     addListener: jest.fn(),
     removeAllListeners: jest.fn(),
   })),
+  DeviceEventEmitter: {
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    removeAllListeners: jest.fn(),
+    emit: jest.fn(),
+  },
   Platform: {
     OS: 'ios',
     select: jest.fn((obj: any) => obj.ios || obj.default),
@@ -70,4 +75,19 @@ jest.mock('react-native-webrtc', () => ({
   RTCSessionDescription: jest.fn(),
   RTCIceCandidate: jest.fn(),
   MediaStream: jest.fn(),
+}));
+
+// Mock react-native-tcp-socket (phone-hosted signaling server)
+jest.mock('react-native-tcp-socket', () => ({
+  createServer: jest.fn(() => ({
+    listen: jest.fn(),
+    close: jest.fn(),
+    on: jest.fn(),
+  })),
+}));
+
+// Mock expo-network (local IP shown in the connection UI)
+jest.mock('expo-network', () => ({
+  getIpAddressAsync: jest.fn(async () => '192.168.1.50'),
+  getNetworkStateAsync: jest.fn(async () => ({ type: 'WIFI', isConnected: true, isInternetReachable: true })),
 }));

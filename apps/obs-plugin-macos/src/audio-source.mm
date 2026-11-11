@@ -38,14 +38,12 @@ void *ojowacam_audio_create(obs_data_t *settings, obs_source_t *source)
 
     std::string resolvedDeviceId = deviceId ? deviceId : "";
     std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
-    if (pairingCode && *pairingCode) {
-        resolvedDeviceId = pairingCode;
-        if (resolvedSignalingUrl.empty()) {
-            resolvedSignalingUrl = "ws://localhost:8765";
-        }
+    std::string resolvedPairingCode = pairingCode ? pairingCode : "";
+    if (resolvedSignalingUrl.empty() && !resolvedPairingCode.empty()) {
+        resolvedSignalingUrl = "ws://localhost:8765";
     }
 
-    if (!resolvedDeviceId.empty() && !resolvedSignalingUrl.empty()) {
+    if (!resolvedSignalingUrl.empty()) {
         data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:nil audioSource:source];
         [data->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
     }
@@ -73,9 +71,9 @@ obs_properties_t *ojowacam_audio_properties(void *data)
 {
     auto *props = obs_properties_create();
 
-    obs_properties_add_text(props, "pairing_code", "Pairing Code (QR/manual)", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, "pairing_code", "Pairing Code (from phone)", OBS_TEXT_DEFAULT);
     obs_properties_add_text(props, "device_id", "Device ID", OBS_TEXT_DEFAULT);
-    obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://)", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://phone-ip:8765)", OBS_TEXT_DEFAULT);
 
     obs_properties_add_button(props, "connect", "Connect to Device",
         ^(obs_properties_t *p, obs_property_t *prop, void *d) {
@@ -91,14 +89,12 @@ obs_properties_t *ojowacam_audio_properties(void *data)
 
             std::string resolvedDeviceId = deviceId ? deviceId : "";
             std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
-            if (pairingCode && *pairingCode) {
-                resolvedDeviceId = pairingCode;
-                if (resolvedSignalingUrl.empty()) {
-                    resolvedSignalingUrl = "ws://localhost:8765";
-                }
+            std::string resolvedPairingCode = pairingCode ? pairingCode : "";
+            if (resolvedSignalingUrl.empty() && !resolvedPairingCode.empty()) {
+                resolvedSignalingUrl = "ws://localhost:8765";
             }
 
-            if (!resolvedDeviceId.empty() && !resolvedSignalingUrl.empty()) {
+            if (!resolvedSignalingUrl.empty()) {
                 data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:nil audioSource:data->source];
                 [data->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
             }

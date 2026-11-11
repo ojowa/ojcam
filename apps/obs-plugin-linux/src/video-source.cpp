@@ -25,7 +25,6 @@ obs_source_info ojowacam_video_source_info = [] {
     info.destroy = ojowacam_video_destroy;
     info.get_width = ojowacam_video_width;
     info.get_height = ojowacam_video_height;
-    info.get_default_size = ojowacam_video_get_default_size;
     info.video_render = ojowacam_video_render;
     info.update = ojowacam_video_update;
     info.get_properties = ojowacam_video_properties;
@@ -46,15 +45,14 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
-    if (pairing_code && *pairing_code) {
-        resolved_device_id = pairing_code;
-        if (resolved_signaling_url.empty()) {
-            resolved_signaling_url = "ws://localhost:8765";
-        }
+    std::string resolved_pairing_code = pairing_code ? pairing_code : "";
+    if (resolved_signaling_url.empty() && !resolved_pairing_code.empty()) {
+        resolved_signaling_url = "ws://localhost:8765";
     }
 
-    if (!resolved_device_id.empty() && !resolved_signaling_url.empty()) {
+    if (!resolved_signaling_url.empty()) {
         data->stream_receiver = new ojowacam::StreamReceiver(source, nullptr);
+        data->stream_receiver->setPairingCode(resolved_pairing_code);
         data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
         data->connected = data->stream_receiver->isConnected();
     }
@@ -77,16 +75,10 @@ void ojowacam_video_destroy(void *data)
 
 void ojowacam_video_render(void *data, gs_effect_t *effect)
 {
-    auto *d = static_cast<OjowacamVideoData *>(data);
-
-    gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
-    if (!image) return;
-
-    gs_texture_t *tex = gs_effect_get_texture(image);
-    if (!tex) return;
-
-    gs_effect_set_texture(image, tex);
-    gs_draw_sprite(tex, 0, d->width, d->height);
+    // Async sources (OBS_SOURCE_ASYNC_VIDEO) are drawn by libobs from the
+    // frame pushed via obs_source_output_video. No custom draw required.
+    UNUSED_PARAMETER(data);
+    UNUSED_PARAMETER(effect);
 }
 
 uint32_t ojowacam_video_width(void *data)
@@ -101,14 +93,6 @@ uint32_t ojowacam_video_height(void *data)
     return d->height;
 }
 
-bool ojowacam_video_get_default_size(obs_data_t *settings, uint32_t *cx, uint32_t *cy)
-{
-    UNUSED_PARAMETER(settings);
-    *cx = 1920;
-    *cy = 1080;
-    return true;
-}
-
 void ojowacam_video_update(void *data, obs_data_t *settings)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
@@ -119,12 +103,9 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
-
-    if (pairing_code && *pairing_code) {
-        resolved_device_id = pairing_code;
-        if (resolved_signaling_url.empty()) {
-            resolved_signaling_url = "ws://localhost:8765";
-        }
+    std::string resolved_pairing_code = pairing_code ? pairing_code : "";
+    if (resolved_signaling_url.empty() && !resolved_pairing_code.empty()) {
+        resolved_signaling_url = "ws://localhost:8765";
     }
 
     if (d->stream_receiver) {
@@ -134,8 +115,9 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
     }
     d->connected = false;
 
-    if (!resolved_device_id.empty() && !resolved_signaling_url.empty()) {
+    if (!resolved_signaling_url.empty()) {
         d->stream_receiver = new ojowacam::StreamReceiver(d->source, nullptr);
+        d->stream_receiver->setPairingCode(resolved_pairing_code);
         if (d->stream_receiver->connect(resolved_device_id, resolved_signaling_url)) {
             d->connected = true;
         }
@@ -147,7 +129,7 @@ obs_properties_t *ojowacam_video_properties(void *data)
     auto *props = obs_properties_create();
     UNUSED_PARAMETER(data);
 
-    obs_properties_add_text(props, "pairing_code", "Pairing Code (QR/manual)", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, "pairing_code", "Pairing Code (from phone)", OBS_TEXT_DEFAULT);
 
     obs_property_t *device_list = obs_properties_add_list(
         props, "device_id", "Device", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -170,7 +152,7 @@ obs_properties_t *ojowacam_video_properties(void *data)
             return true;
         });
 
-    obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://)", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://phone-ip:8765)", OBS_TEXT_DEFAULT);
     obs_properties_add_button(props, "connect", "Connect to Device", [](obs_properties_t*, obs_property_t*, void* data) {
         auto *d = static_cast<OjowacamVideoData*>(data);
         obs_data_t *settings = obs_source_get_settings(d->source);

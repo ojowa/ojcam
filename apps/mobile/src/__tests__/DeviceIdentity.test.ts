@@ -9,6 +9,9 @@ const mockStorage = new Map<string, string>();
 
 beforeEach(() => {
   mockStorage.clear();
+  // Reset the singleton so each test exercises a fresh generate/persist/load path.
+  (deviceIdentity as any).keyPair = null;
+  (deviceIdentity as any).initialized = false;
   setStorageAdapter({
     getItem: jest.fn((key: string) => Promise.resolve(mockStorage.get(key) ?? null)),
     setItem: jest.fn((key: string, value: string) => {

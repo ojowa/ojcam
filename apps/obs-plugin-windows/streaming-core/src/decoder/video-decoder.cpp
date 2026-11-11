@@ -1,6 +1,7 @@
 #include "decoder/video-decoder.h"
 #include <cstring>
 #include <algorithm>
+#include <atomic>
 #include <obs-module.h>
 
 #ifdef OJO_FFMPEG_ENABLED
@@ -216,62 +217,32 @@ bool H264VideoDecoder::initialize(int width, int height, const std::string& code
 bool H264VideoDecoder::decode(const std::vector<uint8_t>& encoded_data,
                                int64_t timestamp_us) {
     if (!initialized_) return false;
+    (void)timestamp_us;
 
-    frame_timestamp_ = timestamp_us;
-    auto nal_units = splitNalUnits(encoded_data);
+    // Track SPS/PPS for stream dimensions only. Actual pixel decode requires
+    // FFmpeg (OJO_FFMPEG_ENABLED) — emitting raw NAL bytes as YUV420 frames
+    // produced garbage video.
+    static std::atomic<bool> warned_no_decoder{false};
+    if (!warned_no_decoder.exchange(true)) {
+        blog(LOG_WARNING,
+             "[Ojowacam] H264 decode unavailable (built without FFmpeg); dropping video frames");
+    }
 
-    for (const auto& nal : nal_units) {
+    for (const auto& nal : splitNalUnits(encoded_data)) {
         if (nal.empty()) continue;
-
         int nal_type = 0, nal_ref_idc = 0;
         if (!parseNalHeader(nal.data(), nal.size(), nal_type, nal_ref_idc)) continue;
-
-        switch (nal_type) {
-            case H264_NAL_SPS:
-                sps_ = nal;
-                if (parseSps(sps_, width_, height_)) {
-                    blog(LOG_DEBUG, "[Ojowacam] SPS parsed: %dx%d", width_, height_);
-                }
-                break;
-
-            case H264_NAL_PPS:
-                pps_ = nal;
-                break;
-
-            case H264_NAL_IDR:
-                if (!frame_buffer_.empty()) {
-                    emitFrame();
-                    frame_buffer_.clear();
-                }
-                waiting_for_idr_ = false;
-                frame_buffer_.insert(frame_buffer_.end(), nal.begin(), nal.end());
-                break;
-
-            case H264_NAL_SLICE:
-                if (!waiting_for_idr_) {
-                    frame_buffer_.insert(frame_buffer_.end(), nal.begin(), nal.end());
-                }
-                break;
-
-            case H264_NAL_SEI:
-            case H264_NAL_AUD:
-            case H264_NAL_END_STREAM:
-            case H264_NAL_END_SEQUENCE:
-                break;
-
-            default:
-                if (!waiting_for_idr_) {
-                    frame_buffer_.insert(frame_buffer_.end(), nal.begin(), nal.end());
-                }
-                break;
+        if (nal_type == H264_NAL_SPS) {
+            sps_ = nal;
+            if (parseSps(sps_, width_, height_)) {
+                blog(LOG_DEBUG, "[Ojowacam] SPS parsed: %dx%d", width_, height_);
+            }
+        } else if (nal_type == H264_NAL_PPS) {
+            pps_ = nal;
         }
     }
-
-    if (!frame_buffer_.empty() && !waiting_for_idr_) {
-        emitFrame();
-        frame_buffer_.clear();
-        return true;
-    }
+    frame_buffer_.clear();
+    waiting_for_idr_ = true;
     return false;
 }
 
@@ -446,15 +417,45 @@ bool FFmpegH264Decoder::decode(const std::vector<uint8_t>& encoded_data,
         out_frame.timestamp_us = timestamp_us;
         out_frame.format = VideoPixelFormat::YUV420;
 
-        if (output_frame->data[0] && output_frame->linesize[0] > 0) {
-            size_t row_size = static_cast<size_t>(output_frame->width) * 4;
-            size_t src_stride = static_cast<size_t>(output_frame->linesize[0]);
-            out_frame.data.resize(row_size * static_cast<size_t>(output_frame->height));
-            for (int row = 0; row < output_frame->height; ++row) {
-                std::memcpy(out_frame.data.data() + row * row_size,
-                            output_frame->data[0] + row * src_stride,
-                            std::min(row_size, src_stride));
+        if (output_frame->format == AV_PIX_FMT_YUV420P &&
+            output_frame->data[0] && output_frame->data[1] && output_frame->data[2]) {
+            // Planar I420 copy: Y (w*h) then U,V planes ((w/2)*(h/2) each),
+            // honoring each plane's linesize. The old width*4 row copy treated
+            // planar data as RGBA and corrupted every frame.
+            const int w = output_frame->width;
+            const int h = output_frame->height;
+            const size_t y_size = static_cast<size_t>(w) * static_cast<size_t>(h);
+            const size_t cw = static_cast<size_t>((w + 1) / 2);
+            const size_t ch = static_cast<size_t>((h + 1) / 2);
+            const size_t uv_size = cw * ch;
+            out_frame.data.resize(y_size + 2 * uv_size);
+
+            for (int row = 0; row < h; ++row) {
+                std::memcpy(out_frame.data.data() + static_cast<size_t>(row) * w,
+                            output_frame->data[0] + static_cast<size_t>(row) * output_frame->linesize[0],
+                            static_cast<size_t>(w));
             }
+            uint8_t* u_dst = out_frame.data.data() + y_size;
+            for (size_t row = 0; row < ch; ++row) {
+                std::memcpy(u_dst + row * cw,
+                            output_frame->data[1] + row * static_cast<size_t>(output_frame->linesize[1]),
+                            cw);
+            }
+            uint8_t* v_dst = u_dst + uv_size;
+            for (size_t row = 0; row < ch; ++row) {
+                std::memcpy(v_dst + row * cw,
+                            output_frame->data[2] + row * static_cast<size_t>(output_frame->linesize[2]),
+                            cw);
+            }
+        } else {
+            static std::atomic<bool> warned_format{false};
+            if (!warned_format.exchange(true)) {
+                blog(LOG_WARNING, "[Ojowacam] FFmpeg: unsupported pixel format %d; dropping frames",
+                     output_frame->format);
+            }
+            if (tmp_frame) av_frame_free(&tmp_frame);
+            av_frame_unref(impl_->frame);
+            continue;
         }
 
         if (onFrameDecoded) {

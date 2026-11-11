@@ -101,6 +101,52 @@ static void rgbaToRgba(const uint8_t* data, int width, int height, uint8_t* rgba
     std::memcpy(rgba, data, size);
 }
 
+// NV12 interleaved UV plane size: (w/2 * h/2) pairs of U,V
+static inline size_t uv_size_nv12(int width, int height) {
+    return static_cast<size_t>((width + 1) / 2) * static_cast<size_t>((height + 1) / 2) * 2;
+}
+
+// ---------------------------------------------------------------------------
+// convertToRgba – convert any supported pixel format to RGBA bytes
+// ---------------------------------------------------------------------------
+
+bool FrameConverter::convertToRgba(const std::vector<uint8_t>& data,
+                                   int width, int height,
+                                   std::vector<uint8_t>& out) {
+    if (width <= 0 || height <= 0) return false;
+
+    size_t rgba_size = static_cast<size_t>(width) * height * 4;
+    out.assign(rgba_size, 0);
+
+    const uint8_t* src = data.data();
+    switch (current_format_) {
+        case VideoPixelFormat::YUV420: {
+            size_t y_size = static_cast<size_t>(width) * height;
+            size_t uv_size = ((width + 1) / 2) * ((height + 1) / 2);
+            if (data.size() < y_size + 2 * uv_size) return false;
+            yuv420ToRgba(src, src + y_size, src + y_size + uv_size,
+                         width, height, out.data());
+            break;
+        }
+        case VideoPixelFormat::NV12: {
+            size_t y_size = static_cast<size_t>(width) * height;
+            if (data.size() < y_size + uv_size_nv12(width, height)) return false;
+            nv12ToRgba(src, src + y_size, width, height, out.data());
+            break;
+        }
+        case VideoPixelFormat::RGBA:
+            if (data.size() < rgba_size) return false;
+            rgbaToRgba(src, width, height, out.data());
+            break;
+        case VideoPixelFormat::Unknown:
+        default:
+            if (data.size() < rgba_size) return false;
+            std::memcpy(out.data(), src, rgba_size);
+            break;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // convertToTexture – convert any supported pixel format to an OBS RGBA texture
 // ---------------------------------------------------------------------------
@@ -110,10 +156,11 @@ gs_texture_t* FrameConverter::convertToTexture(const std::vector<uint8_t>& data,
                                                gs_texture_t* existing_texture) {
     if (width <= 0 || height <= 0) return nullptr;
 
-    // Recreate texture if dimensions changed
-    if (!existing_texture || width != current_width_ || height != current_height_) {
-        if (existing_texture) {
-            gs_texture_destroy(existing_texture);
+    // Recreate texture only when dimensions change (never leak the old one).
+    if (!current_texture_ || width != current_width_ || height != current_height_) {
+        if (current_texture_) {
+            gs_texture_destroy(current_texture_);
+            current_texture_ = nullptr;
         }
         current_texture_ = gs_texture_create(width, height, GS_RGBA, 1, nullptr, GS_DYNAMIC);
         current_width_ = width;
@@ -122,33 +169,8 @@ gs_texture_t* FrameConverter::convertToTexture(const std::vector<uint8_t>& data,
 
     if (!current_texture_) return nullptr;
 
-    // Convert pixel data to RGBA in a temporary buffer
-    size_t rgba_size = static_cast<size_t>(width) * height * 4;
-    std::vector<uint8_t> rgba(rgba_size);
-
-    const uint8_t* src = data.data();
-    switch (current_format_) {
-        case VideoPixelFormat::YUV420: {
-            size_t y_size = static_cast<size_t>(width) * height;
-            size_t uv_size = ((width + 1) / 2) * ((height + 1) / 2);
-            yuv420ToRgba(src, src + y_size, src + y_size + uv_size,
-                         width, height, rgba.data());
-            break;
-        }
-        case VideoPixelFormat::NV12: {
-            size_t y_size = static_cast<size_t>(width) * height;
-            nv12ToRgba(src, src + y_size, width, height, rgba.data());
-            break;
-        }
-        case VideoPixelFormat::RGBA:
-            rgbaToRgba(src, width, height, rgba.data());
-            break;
-        case VideoPixelFormat::Unknown:
-        default:
-            std::memcpy(rgba.data(), src,
-                        std::min(rgba_size, data.size()));
-            break;
-    }
+    std::vector<uint8_t> rgba;
+    if (!convertToRgba(data, width, height, rgba)) return nullptr;
 
     gs_texture_set_image(current_texture_, rgba.data(),
                          static_cast<uint32_t>(width * 4 * sizeof(uint8_t)), false);
