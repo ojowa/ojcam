@@ -14,8 +14,10 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "cameraUsageDescription": "Ojowacam needs access to your camera to stream video.",
-      "microphoneUsageDescription": "Ojowacam needs access to your microphone to stream audio."
+      "infoPlist": {
+        "NSCameraUsageDescription": "Ojowacam needs access to your camera to stream video.",
+        "NSMicrophoneUsageDescription": "Ojowacam needs access to your microphone to stream audio."
+      }
     },
     "android": {
       "package": "com.ojowacam.mobile",
