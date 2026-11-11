@@ -1,5 +1,7 @@
 platform :ios, '13.0'
 
+use_modular_headers!
+
 target 'Ojowacam' do
   pod 'React-Core', :path => '../node_modules/react-native'
   pod 'React-CoreModules', :path => '../node_modules/react-native/React/CoreModules'

@@ -16,6 +16,7 @@
     "@react-native/codegen": "0.73.3",
     "@react-navigation/native": "^6.1.8",
     "@react-navigation/stack": "^6.3.17",
+    "@sentry/react-native": "^8.34.0",
     "expo": "~50.0.0",
     "expo-av": "^13.4.0",
     "expo-camera": "~14.1.3",

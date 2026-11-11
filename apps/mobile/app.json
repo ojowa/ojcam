@@ -44,7 +44,15 @@
       "expo-camera",
       "expo-av",
       "expo-screen-orientation",
-      "expo-file-system"
+      "expo-file-system",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "ojcam",
+          "organization": "rille-ville"
+        }
+      ]
     ],
     "extra": {
       "eas": {
