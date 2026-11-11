@@ -19,6 +19,7 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
 
     private val TAG = "OjowacamCamera"
     private val cameraManager: CameraManager
+    private val permissions = AndroidPermissions(reactContext)
     private var currentCameraId: String? = null
     private var isStreaming = false
 
@@ -62,6 +63,12 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
 
     @ReactMethod
     fun startCapture(cameraId: String, width: Int, height: Int, fps: Int, promise: Promise) {
+        permissions.ensureCamera(promise) {
+            startCaptureInternal(cameraId, width, height, fps, promise)
+        }
+    }
+
+    private fun startCaptureInternal(cameraId: String, width: Int, height: Int, fps: Int, promise: Promise) {
         try {
             stopCaptureInternal()
             currentCameraId = cameraId
@@ -86,6 +93,9 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val handler = android.os.Handler(android.os.HandlerThread("CameraOpenThread").apply { start() }.looper)
             cameraManager.openCamera(cameraId, stateCallback, handler)
             promise.resolve(true)
+        } catch (e: SecurityException) {
+            isStreaming = false
+            promise.reject("E_CAMERA_PERMISSION", "Camera permission not granted", e)
         } catch (e: Exception) {
             isStreaming = false
             promise.reject("CAPTURE_ERROR", e.message, e)

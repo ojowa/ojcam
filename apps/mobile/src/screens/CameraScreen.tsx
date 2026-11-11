@@ -1,10 +1,27 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, PermissionsAndroid, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Camera, CameraType, FlashMode } from 'expo-camera';
 import { CameraService } from '../native/modules';
 import { streamingService } from '../services/StreamingService';
 import { CameraDevice } from '../native/modules';
+
+/** Request Android runtime camera + microphone permissions. Returns true if granted (or non-Android). */
+export async function ensureCapturePermissions(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const result = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.CAMERA,
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+    ]);
+    return (
+      result[PermissionsAndroid.PERMISSIONS.CAMERA] === PermissionsAndroid.RESULTS.GRANTED &&
+      result[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED
+    );
+  } catch {
+    return false;
+  }
+}
 
 export default function CameraScreen() {
   const [isStreaming, setIsStreaming] = React.useState(false);
@@ -39,8 +56,12 @@ export default function CameraScreen() {
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Runtime request for camera + mic (Android); iOS uses expo-camera prompts.
+      const granted = await ensureCapturePermissions();
       const result = await Camera.requestCameraPermissionsAsync();
-      if (!cancelled) setPermission(result.granted);
+      if (!cancelled) {
+        setPermission(granted && result.granted);
+      }
     })();
     return () => {
       cancelled = true;
@@ -69,6 +90,13 @@ export default function CameraScreen() {
       setPreviewReady(false);
       return;
     }
+    // Ensure runtime camera/mic grants before native capture opens the camera.
+    const granted = await ensureCapturePermissions();
+    if (!granted) {
+      setStreamError('Camera and microphone permissions are required to stream.');
+      return;
+    }
+    setPermission(true);
     // Free the camera for the native capture module before streaming starts.
     setPreviewReady(false);
     setNativeCapture(true);

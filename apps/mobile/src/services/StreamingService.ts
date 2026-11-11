@@ -11,6 +11,7 @@ import {
   type CameraDevice,
   type StreamConfig,
 } from '../native/modules';
+import { PermissionsAndroid, Platform } from 'react-native';
 import { signalingService } from './signaling/SignalingService';
 import { authService } from './security/AuthService';
 import { pairingService } from './security/PairingService';
@@ -294,6 +295,18 @@ export class StreamingService {
           }
         } else {
           throw new Error('Not authenticated. Pairing required before streaming.');
+        }
+      }
+      // Android runtime permissions must be granted before native capture.
+      if (Platform.OS === 'android') {
+        const perms = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.CAMERA,
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+        ]);
+        const cameraOk = perms[PermissionsAndroid.PERMISSIONS.CAMERA] === PermissionsAndroid.RESULTS.GRANTED;
+        const micOk = perms[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED;
+        if (!cameraOk || !micOk) {
+          throw new Error('Camera and microphone permissions are required to stream.');
         }
       }
       this.streamConfig = config;

@@ -51,14 +51,21 @@ class OjowacamWebRTCModule: RCTEventEmitter {
     }
 
     @objc
-    func createPeerConnection(_ iceServers: String, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    func createPeerConnection(_ iceServers: NSArray, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
         guard let factory = peerConnectionFactory else {
             reject("WEBRTC_NOT_INIT", "WebRTC not initialized", nil)
             return
         }
 
         let config = RTCConfiguration()
-        config.iceServers = [RTCIceServer(urlStrings: [iceServers])]
+        var rtcServers: [RTCIceServer] = []
+        for case let url as String in iceServers {
+            let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                rtcServers.append(RTCIceServer(urlStrings: [trimmed]))
+            }
+        }
+        config.iceServers = rtcServers
 
         let constraints = RTCMediaConstraints(mandatoryConstraints: [
             "OfferToReceiveAudio": "true",

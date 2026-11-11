@@ -12,6 +12,7 @@ import com.facebook.react.bridge.Promise
 class AudioModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     private val TAG = "OjowacamAudio"
+    private val permissions = AndroidPermissions(reactContext)
     private var audioRecord: AudioRecord? = null
     private var isRecording = false
     private var audioThread: Thread? = null
@@ -27,6 +28,12 @@ class AudioModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
 
     @ReactMethod
     fun startRecording(promise: Promise) {
+        permissions.ensureMicrophone(promise) {
+            startRecordingInternal(promise)
+        }
+    }
+
+    private fun startRecordingInternal(promise: Promise) {
         try {
             if (isRecording) { promise.resolve(true); return }
             val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
@@ -37,6 +44,12 @@ class AudioModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
                 audioFormat,
                 minBufferSize * 2
             )
+            if (audioRecord!!.state != AudioRecord.STATE_INITIALIZED) {
+                audioRecord?.release()
+                audioRecord = null
+                promise.reject("E_AUDIO_PERMISSION", "Microphone unavailable or permission denied", null)
+                return
+            }
             audioRecord!!.startRecording()
             isRecording = true
             audioThread = Thread {
@@ -52,6 +65,9 @@ class AudioModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
             }
             audioThread!!.start()
             promise.resolve(true)
+        } catch (e: SecurityException) {
+            isRecording = false
+            promise.reject("E_AUDIO_PERMISSION", "Microphone permission not granted", e)
         } catch (e: Exception) {
             isRecording = false
             promise.reject("AUDIO_ERROR", e.message, e)

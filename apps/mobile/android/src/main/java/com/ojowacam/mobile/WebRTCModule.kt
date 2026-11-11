@@ -6,10 +6,12 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.webrtc.*
 import org.webrtc.audio.JavaAudioDeviceModule
+import java.nio.ByteBuffer
 
 class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
@@ -66,23 +68,17 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun initWebRTC(promise: Promise) {
         try {
             PeerConnectionFactory.initialize(
-                reactApplicationContext,
                 PeerConnectionFactory.InitializationOptions.builder(reactApplicationContext)
-                    .setEnableVideoHwAcceleration(true)
-                    .createInitializationOptions(),
-                PeerConnectionFactory.Options(),
-                JavaAudioDeviceModule.builder(reactApplicationContext)
-                    .createAudioDeviceModule(),
-                null
+                    .createInitializationOptions()
             )
-            val options = PeerConnectionFactory.Options()
-            val videoEncoderFactory = DefaultVideoEncoderFactory(
-                reactApplicationContext,
-                DefaultVideoEncoderFactory.CodecType.H264
-            )
-            val videoDecoderFactory = DefaultVideoDecoderFactory(reactApplicationContext)
+            val audioDeviceModule = JavaAudioDeviceModule.builder(reactApplicationContext)
+                .setEnableVolumeLogger(false)
+                .createAudioDeviceModule()
+            val videoEncoderFactory = SoftwareVideoEncoderFactory()
+            val videoDecoderFactory = SoftwareVideoDecoderFactory()
             peerConnectionFactory = PeerConnectionFactory.builder()
-                .setOptions(options)
+                .setOptions(PeerConnectionFactory.Options())
+                .setAudioDeviceModule(audioDeviceModule)
                 .setVideoEncoderFactory(videoEncoderFactory)
                 .setVideoDecoderFactory(videoDecoderFactory)
                 .createPeerConnectionFactory()
@@ -93,26 +89,44 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     }
 
     @ReactMethod
-    fun createPeerConnection(iceServers: String, promise: Promise) {
+    fun createPeerConnection(iceServers: ReadableArray, promise: Promise) {
         try {
-            val server = PeerConnection.IceServer.builder(iceServers).createIceServer()
-            val config = PeerConfiguration()
-            config.iceServers.add(server)
+            val factory = peerConnectionFactory ?: throw Exception("WebRTC not initialized")
+            val config = PeerConnection.RTCConfiguration(
+                ArrayList<PeerConnection.IceServer>()
+            )
+            for (i in 0 until iceServers.size()) {
+                val url = iceServers.getString(i)?.trim()
+                if (url.isNullOrEmpty()) continue
+                config.iceServers.add(PeerConnection.IceServer.builder(url).createIceServer())
+            }
             config.iceTransportsType = PeerConnection.IceTransportsType.ALL
             val pcConstraints = MediaConstraints()
             pcConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveAudio", "true"))
             pcConstraints.mandatory.add(MediaConstraints.KeyValue("OfferToReceiveVideo", "false"))
-            peerConnection = peerConnectionFactory!!.createPeerConnection(config, pcConstraints, object : PeerConnection.Observer {
-                override fun onIceCandidate(iceCandidate: IceCandidate) {
-                    emitIceCandidate(iceCandidate.sdp)
+            peerConnection = factory.createPeerConnection(config, pcConstraints, object : PeerConnection.Observer {
+                override fun onSignalingChange(newState: PeerConnection.SignalingState) {
+                    Log.d(TAG, "Signaling state: $newState")
                 }
                 override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState) {
                     emitConnectionStateChange(newState.name)
                     Log.d(TAG, "ICE connection state: $newState")
                 }
+                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+                override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState) {
+                    Log.d(TAG, "ICE gathering state: $newState")
+                }
+                override fun onIceCandidate(iceCandidate: IceCandidate) {
+                    emitIceCandidate(iceCandidate.sdp)
+                }
+                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
                 override fun onAddStream(stream: MediaStream) {
                     Log.d(TAG, "Remote stream added")
                 }
+                override fun onRemoveStream(stream: MediaStream) {
+                    Log.d(TAG, "Remote stream removed")
+                }
+                override fun onDataChannel(dataChannel: DataChannel) {}
                 override fun onRenegotiationNeeded() {
                     Log.d(TAG, "Renegotiation needed")
                 }
@@ -335,9 +349,21 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun getVideoTrack(): VideoTrack? = videoTrack
     fun getAudioTrack(): AudioTrack? = audioTrack
 
-    override fun onDestroy() {
-        closeConnection(com.facebook.react.bridge.Promise() { _, _ -> })
-        super.onDestroy()
+    override fun invalidate() {
+        try {
+            peerConnection?.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to close peer connection", e)
+        }
+        peerConnection = null
+        videoTrack = null
+        audioTrack = null
+        videoSource = null
+        audioSource = null
+        videoSink = null
+        frameWidth = 0
+        frameHeight = 0
+        super.invalidate()
     }
 
 }

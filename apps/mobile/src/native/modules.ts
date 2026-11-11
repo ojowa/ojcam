@@ -121,8 +121,11 @@ export class WebRTCService {
 
   static async createPeerConnection(iceServers: string[]): Promise<boolean> {
     this.bindNativeEvents();
-    const servers = iceServers.join(',');
-    return OjowacamWebRTC.createPeerConnection(servers);
+    // Pass each URL as its own entry — natives must not treat a joined string as one URL.
+    const urls = iceServers
+      .map((s) => (typeof s === 'string' ? s.trim() : ''))
+      .filter((s) => s.length > 0);
+    return OjowacamWebRTC.createPeerConnection(urls);
   }
 
   static async createOffer(): Promise<boolean> {
