@@ -21,27 +21,33 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '15.0'
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-- name: Install mobile dependencies
+
+      - name: Install mobile dependencies
         run: |
           cd apps/mobile && npm install
+
       - name: Install CocoaPods
         run: |
           gem install cocoapods
+
       - name: Install iOS pods
         run: |
           cd apps/mobile/ios && pod install
+
       - name: Create iOS export options plist
         run: |
-          cat > apps/mobile/ios/ExportOptions.plist << EOF
+          cat > apps/mobile/ios/ExportOptions.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -59,14 +65,17 @@ jobs:
           </dict>
           </plist>
           EOF
+
       - name: Build iOS app (archive)
         run: |
           cd apps/mobile/ios
           xcodebuild -project Ojowacam.xcodeproj -scheme Ojowacam -configuration Release -sdk iphoneos -archivePath build/Ojowacam.xcarchive archive
+
       - name: Export iOS IPA
         run: |
           cd apps/mobile/ios
           xcodebuild -exportArchive -archivePath build/Ojowacam.xcarchive -exportPath build/ipa -exportOptionsPlist ExportOptions.plist
+
       - name: Upload iOS IPA
         uses: actions/upload-artifact@v4
         with:
