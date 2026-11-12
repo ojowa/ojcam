@@ -1,0 +1,541 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for services/protocol/ProtobufCodec.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">services/protocol</a> ProtobufCodec.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">84.96% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>113/133</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">58.71% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>64/109</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>32/32</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">91.25% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>73/80</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">60x</span>
+<span class="cline-any cline-yes">60x</span>
+<span class="cline-any cline-yes">60x</span>
+<span class="cline-any cline-yes">60x</span>
+<span class="cline-any cline-yes">60x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">60x</span>
+<span class="cline-any cline-yes">60x</span>
+<span class="cline-any cline-yes">65x</span>
+<span class="cline-any cline-yes">65x</span>
+<span class="cline-any cline-yes">65x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">124x</span>
+<span class="cline-any cline-yes">124x</span>
+<span class="cline-any cline-yes">56x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">17x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">17x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">53x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">17x</span>
+<span class="cline-any cline-yes">17x</span>
+<span class="cline-any cline-yes">17x</span>
+<span class="cline-any cline-yes">17x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">99x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">53x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import type { DeviceAnnouncement, StartSession, ControlCommand, Capabilities, VideoConfig, AudioConfig, ProtocolMessage } from './messageTypes';
+import { FieldTags, WireType } from './messageTypes';
+import { utf8Decode, utf8Encode } from '../../utils/utf8';
+export { createDeviceAnnouncement, createStartSession, createControlCommand } from './messageTypes';
+export type { DeviceAnnouncement, StartSession, ControlCommand, Capabilities, VideoConfig, AudioConfig, ProtocolMessage } from './messageTypes';
+&nbsp;
+export function encodeVarint(value: number): Uint8Array {
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (!Number.isSafeInteger(value) || value &lt; 0) <span class="cstat-no" title="statement not covered" >throw new Error('Varint must be a non-negative safe integer');</span>
+  const bytes: number[] = [];
+  while (value &gt;= 0x80) { bytes.push((value % 128) | 0x80); value = Math.floor(value / 128); }
+  bytes.push(value);
+  return new Uint8Array(bytes);
+}
+export function decodeVarint(data: Uint8Array, offset: number): [number, number] {
+  let result = 0; let multiplier = 1; let i = offset;
+  while (i &lt; data.length &amp;&amp; i - offset &lt; 10) {
+    const byte = data[i++]; result += (byte &amp; 0x7f) * multiplier;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (!Number.isSafeInteger(result)) <span class="cstat-no" title="statement not covered" >throw new Error('Varint exceeds safe integer range');</span>
+    if ((byte &amp; 0x80) === 0) return [result, i - offset];
+    multiplier *= 128;
+  }
+<span class="cstat-no" title="statement not covered" >  throw new Error('Truncated or oversized varint');</span>
+}
+function concat(parts: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((n, p) =&gt; n + p.length, 0)); let offset = 0;
+  for (const part of parts) { result.set(part, offset); offset += part.length; }
+  return result;
+}
+function encodeBytes(value: Uint8Array): Uint8Array { return concat([encodeVarint(value.length), value]); }
+function encodeValue(value: number | string | Uint8Array, wire: number): Uint8Array {
+  if (wire === WireType.Varint) return encodeVarint(value as number);
+  <span class="missing-if-branch" title="else path not taken" >E</span>if (wire === WireType.LengthDelimited) return encodeBytes(typeof value === 'string' ? utf8Encode(value) : value as Uint8Array);
+<span class="cstat-no" title="statement not covered" >  throw new Error(`Unsupported wire type for encoding: ${wire}`);</span>
+}
+function encodeField(tag: number, wire: number, value: number | string | Uint8Array): Uint8Array {
+  return concat([encodeVarint((tag &lt;&lt; 3) | wire), encodeValue(value, wire)]);
+}
+function encodeCapabilities(c: Capabilities): Uint8Array {
+  return concat([
+    encodeField(FieldTags.Capabilities_video, WireType.Varint, c.video ? 1 : <span class="branch-1 cbranch-no" title="branch not covered" >0)</span>,
+    encodeField(FieldTags.Capabilities_audio, WireType.Varint, c.audio ? 1 : 0),
+    ...c.resolutions.map(v =&gt; encodeField(FieldTags.Capabilities_resolutions, WireType.LengthDelimited, v)),
+    ...c.frameRates.map(v =&gt; encodeField(FieldTags.Capabilities_frameRates, WireType.Varint, v)),
+  ]);
+}
+function encodeVideo(c: VideoConfig): Uint8Array { return concat([
+  encodeField(FieldTags.VideoConfig_resolution, WireType.LengthDelimited, c.resolution),
+  encodeField(FieldTags.VideoConfig_fps, WireType.Varint, c.fps),
+  encodeField(FieldTags.VideoConfig_codec, WireType.LengthDelimited, c.codec),
+  encodeField(FieldTags.VideoConfig_bitrate, WireType.Varint, c.bitrate),
+]); }
+function encodeAudio(c: AudioConfig): Uint8Array { return concat([
+  encodeField(FieldTags.AudioConfig_codec, WireType.LengthDelimited, c.codec),
+  encodeField(FieldTags.AudioConfig_sampleRate, WireType.Varint, c.sampleRate),
+  encodeField(FieldTags.AudioConfig_channels, WireType.Varint, c.channels),
+]); }
+function encodeAnnouncement(m: DeviceAnnouncement): Uint8Array { return concat([
+  encodeField(FieldTags.DeviceAnnouncement_deviceId, WireType.LengthDelimited, m.deviceId),
+  encodeField(FieldTags.DeviceAnnouncement_deviceName, WireType.LengthDelimited, m.deviceName),
+  encodeField(FieldTags.DeviceAnnouncement_capabilities, WireType.LengthDelimited, encodeCapabilities(m.capabilities)),
+]); }
+function encodeStart(m: StartSession): Uint8Array { return concat([
+  encodeField(FieldTags.StartSession_sessionId, WireType.LengthDelimited, m.sessionId),
+  encodeField(FieldTags.StartSession_video, WireType.LengthDelimited, encodeVideo(m.video)),
+  encodeField(FieldTags.StartSession_audio, WireType.LengthDelimited, encodeAudio(m.audio)),
+]); }
+function encodeControl(m: ControlCommand): Uint8Array {
+  const parts = [encodeField(FieldTags.ControlCommand_type, WireType.LengthDelimited, m.command)];
+  if (m.zoom !== undefined) parts.push(encodeField(FieldTags.ControlCommand_zoom, WireType.Varint, m.zoom));
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (m.focus !== undefined) <span class="cstat-no" title="statement not covered" >parts.push(encodeField(FieldTags.ControlCommand_focus, WireType.Varint, m.focus ? 1 : 0));</span>
+  if (m.torch !== undefined) parts.push(encodeField(FieldTags.ControlCommand_torch, WireType.Varint, m.torch ? 1 : <span class="branch-1 cbranch-no" title="branch not covered" >0)</span>);
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (m.orientation !== undefined) <span class="cstat-no" title="statement not covered" >parts.push(encodeField(FieldTags.ControlCommand_orientation, WireType.LengthDelimited, m.orientation));</span>
+  return concat(parts);
+}
+export function encodeMessage(message: ProtocolMessage): Uint8Array {
+  switch (message.type) {
+    case 'DEVICE_ANNOUNCEMENT': return encodeAnnouncement(message);
+    case 'START_SESSION': return encodeStart(message);
+    case 'CONTROL_COMMAND': return encodeControl(message);
+  }
+}
+export function encodeMessageBase64(message: ProtocolMessage): string {
+  let binary = ''; for (const b of encodeMessage(message)) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+&nbsp;
+type Field = { tag: number; wire: number; value: number | Uint8Array };
+function readField(data: Uint8Array, offset: number): [Field, number] {
+  const [key, keySize] = decodeVarint(data, offset); const tag = Math.floor(key / 8); const wire = key &amp; 7;
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (tag === 0) <span class="cstat-no" title="statement not covered" >throw new Error('Invalid protobuf field number');</span>
+  let cursor = offset + keySize;
+  if (wire === WireType.Varint) { const [value, size] = decodeVarint(data, cursor); return [{ tag, wire, value }, keySize + size]; }
+  <span class="missing-if-branch" title="else path not taken" >E</span>if (wire === WireType.LengthDelimited) {
+    const [length, size] = decodeVarint(data, cursor); cursor += size;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (length &gt; data.length - cursor) <span class="cstat-no" title="statement not covered" >throw new Error('Truncated length-delimited field');</span>
+    return [{ tag, wire, value: data.slice(cursor, cursor + length) }, size + keySize + length];
+  }
+  let skip = <span class="cstat-no" title="statement not covered" >wire === 1 ? 8 : wire === 5 ? 4 : 0;</span>
+<span class="cstat-no" title="statement not covered" >  if (!skip) <span class="cstat-no" title="statement not covered" >throw new Error(`Unsupported wire type for decoding: ${wire}`);</span></span>
+<span class="cstat-no" title="statement not covered" >  if (cursor + skip &gt; data.length) <span class="cstat-no" title="statement not covered" >throw new Error('Truncated fixed-width field');</span></span>
+<span class="cstat-no" title="statement not covered" >  return [{ tag, wire, value: data.slice(cursor, cursor + skip) }, keySize + skip];</span>
+}
+function fields(data: Uint8Array): Field[] {
+  const out: Field[] = []; let offset = 0;
+  while (offset &lt; data.length) { const [field, count] = readField(data, offset); <span class="missing-if-branch" title="if path not taken" >I</span>if (count &lt;= 0) <span class="cstat-no" title="statement not covered" >throw new Error('Invalid protobuf field'); </span>out.push(field); offset += count; }
+  return out;
+}
+function str(f: Field): string { <span class="missing-if-branch" title="if path not taken" >I</span>if (!(f.value instanceof Uint8Array)) <span class="cstat-no" title="statement not covered" >throw new Error('Expected length-delimited string'); </span>return utf8Decode(f.value); }
+function num(f: Field): number { <span class="missing-if-branch" title="if path not taken" >I</span>if (typeof f.value !== 'number') <span class="cstat-no" title="statement not covered" >throw new Error('Expected varint'); </span>return f.value; }
+function nested(f: Field): Field[] { <span class="missing-if-branch" title="if path not taken" >I</span>if (!(f.value instanceof Uint8Array)) <span class="cstat-no" title="statement not covered" >throw new Error('Expected nested message'); </span>return fields(f.value); }
+function last(fs: Field[], tag: number): Field | undefined { return [...fs].reverse().find(f =&gt; f.tag === tag); }
+function decodeCapabilities(fs: Field[]): Capabilities {
+  return { video: num(last(fs, FieldTags.Capabilities_video) ?? <span class="branch-1 cbranch-no" title="branch not covered" >{ tag: 1, wire: 0, value: 0 })</span> !== 0,
+    audio: num(last(fs, FieldTags.Capabilities_audio) ?? <span class="branch-1 cbranch-no" title="branch not covered" >{ tag: 2, wire: 0, value: 0 })</span> !== 0,
+    resolutions: fs.filter(f =&gt; f.tag === FieldTags.Capabilities_resolutions).map(str),
+    frameRates: fs.filter(f =&gt; f.tag === FieldTags.Capabilities_frameRates).map(num) };
+}
+function decodeVideo(fs: Field[]): VideoConfig { return {
+  resolution: last(fs, FieldTags.VideoConfig_resolution) ? str(last(fs, FieldTags.VideoConfig_resolution)!) : <span class="branch-1 cbranch-no" title="branch not covered" >'',</span>
+  fps: last(fs, FieldTags.VideoConfig_fps) ? num(last(fs, FieldTags.VideoConfig_fps)!) : <span class="branch-1 cbranch-no" title="branch not covered" >30,</span>
+  codec: last(fs, FieldTags.VideoConfig_codec) ? str(last(fs, FieldTags.VideoConfig_codec)!) : <span class="branch-1 cbranch-no" title="branch not covered" >'H264',</span>
+  bitrate: last(fs, FieldTags.VideoConfig_bitrate) ? num(last(fs, FieldTags.VideoConfig_bitrate)!) : <span class="branch-1 cbranch-no" title="branch not covered" >0,</span>
+}; }
+function decodeAudio(fs: Field[]): AudioConfig { return {
+  codec: last(fs, FieldTags.AudioConfig_codec) ? str(last(fs, FieldTags.AudioConfig_codec)!) : <span class="branch-1 cbranch-no" title="branch not covered" >'OPUS',</span>
+  sampleRate: last(fs, FieldTags.AudioConfig_sampleRate) ? num(last(fs, FieldTags.AudioConfig_sampleRate)!) : <span class="branch-1 cbranch-no" title="branch not covered" >48000,</span>
+  channels: last(fs, FieldTags.AudioConfig_channels) ? num(last(fs, FieldTags.AudioConfig_channels)!) : <span class="branch-1 cbranch-no" title="branch not covered" >2,</span>
+}; }
+export function decodeMessage(data: Uint8Array, expectedType?: string): ProtocolMessage {
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (!expectedType &amp;&amp; <span class="branch-1 cbranch-no" title="branch not covered" >data.length &gt; 0)</span> <span class="cstat-no" title="statement not covered" >expectedType = 'DEVICE_ANNOUNCEMENT';</span>
+  const fs = fields(data);
+  if (expectedType === 'DEVICE_ANNOUNCEMENT') {
+    const caps = last(fs, FieldTags.DeviceAnnouncement_capabilities);
+    return { type: expectedType, deviceId: last(fs, FieldTags.DeviceAnnouncement_deviceId) ? str(last(fs, FieldTags.DeviceAnnouncement_deviceId)!) : <span class="branch-1 cbranch-no" title="branch not covered" >'',</span> deviceName: last(fs, FieldTags.DeviceAnnouncement_deviceName) ? str(last(fs, FieldTags.DeviceAnnouncement_deviceName)!) : <span class="branch-1 cbranch-no" title="branch not covered" >'',</span> capabilities: caps ? decodeCapabilities(nested(caps)) : <span class="branch-1 cbranch-no" title="branch not covered" >{ video: false, audio: false, resolutions: [], frameRates: [] } </span>};
+  }
+  if (expectedType === 'START_SESSION') {
+    const video = last(fs, FieldTags.StartSession_video); const audio = last(fs, FieldTags.StartSession_audio);
+    return { type: expectedType, sessionId: last(fs, FieldTags.StartSession_sessionId) ? str(last(fs, FieldTags.StartSession_sessionId)!) : <span class="branch-1 cbranch-no" title="branch not covered" >'',</span> video: video ? decodeVideo(nested(video)) : <span class="branch-1 cbranch-no" title="branch not covered" >{ resolution: '', fps: 30, codec: 'H264', bitrate: 0 },</span> audio: audio ? decodeAudio(nested(audio)) : <span class="branch-1 cbranch-no" title="branch not covered" >{ codec: 'OPUS', sampleRate: 48000, channels: 2 } </span>};
+  }
+  <span class="missing-if-branch" title="else path not taken" >E</span>if (expectedType === 'CONTROL_COMMAND') {
+    const get = (tag: number) =&gt; last(fs, tag);
+    const command = get(FieldTags.ControlCommand_type);
+    const zoom = get(FieldTags.ControlCommand_zoom); const focus = get(FieldTags.ControlCommand_focus); const torch = get(FieldTags.ControlCommand_torch); const orientation = get(FieldTags.ControlCommand_orientation);
+    return { type: expectedType, command: command ? str(command) as ControlCommand['command'] : <span class="branch-1 cbranch-no" title="branch not covered" >'orientation',</span> ...(zoom ? { zoom: num(zoom) } : {}), ...(focus ? <span class="branch-0 cbranch-no" title="branch not covered" >{ focus: num(focus) !== 0 } </span>: {}), ...(torch ? { torch: num(torch) !== 0 } : {}), ...(orientation ? <span class="branch-0 cbranch-no" title="branch not covered" >{ orientation: str(orientation) as ControlCommand['orientation'] } </span>: {}) };
+  }
+<span class="cstat-no" title="statement not covered" >  throw new Error(`Unknown or unsupported message type: ${expectedType}`);</span>
+}
+export function decodeMessageBase64(base64: string, expectedType?: string): ProtocolMessage {
+  const normalized = base64.replace(/-/g, '+').replace(/_/g, '/'); const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4); const binary = atob(padded); const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i &lt; binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return decodeMessage(bytes, expectedType);
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-11-12T16:08:34.775Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    
