@@ -28,7 +28,6 @@
     "expo-splash-screen": "~0.26.5",
     "expo-status-bar": "~1.11.1",
     "js-sha1": "^0.7.0",
-    "metro": "0.80.12",
     "react": "18.2.0",
     "react-native": "0.73.6",
     "react-native-gesture-handler": "~2.14.0",
