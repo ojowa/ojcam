@@ -10,6 +10,8 @@
  */
 
 import { sha1 } from 'js-sha1';
+import { utf8Decode, utf8Encode } from '../../utils/utf8';
+export { utf8Decode, utf8Encode };
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const DEFAULT_PORT = 8765;
@@ -37,63 +39,6 @@ export const defaultTransportConfig: TransportConfig = {
   heartbeatTimeoutMs: 5000,
   messageQueueMaxSize: 100,
 };
-
-// ---------------------------------------------------------------------------
-// Byte helpers (Hermes has no TextEncoder/TextDecoder)
-// ---------------------------------------------------------------------------
-
-export function utf8Encode(str: string): Uint8Array {
-  const out: number[] = [];
-  for (let i = 0; i < str.length; i++) {
-    let c = str.charCodeAt(i);
-    if (c < 0x80) {
-      out.push(c);
-    } else if (c < 0x800) {
-      out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
-    } else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
-      const c2 = str.charCodeAt(++i);
-      const cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
-      out.push(
-        0xf0 | (cp >> 18),
-        0x80 | ((cp >> 12) & 0x3f),
-        0x80 | ((cp >> 6) & 0x3f),
-        0x80 | (cp & 0x3f),
-      );
-    } else {
-      out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
-    }
-  }
-  return Uint8Array.from(out);
-}
-
-export function utf8Decode(bytes: Uint8Array): string {
-  let out = '';
-  let i = 0;
-  while (i < bytes.length) {
-    const b0 = bytes[i++];
-    let cp: number;
-    if (b0 < 0x80) cp = b0;
-    else if ((b0 & 0xe0) === 0xc0) cp = ((b0 & 0x1f) << 6) | (bytes[i++] & 0x3f);
-    else if ((b0 & 0xf0) === 0xe0) {
-      cp = ((b0 & 0x0f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f);
-    } else if ((b0 & 0xf8) === 0xf0) {
-      cp =
-        ((b0 & 0x07) << 18) |
-        ((bytes[i++] & 0x3f) << 12) |
-        ((bytes[i++] & 0x3f) << 6) |
-        (bytes[i++] & 0x3f);
-    } else {
-      continue;
-    }
-    if (cp > 0xffff) {
-      cp -= 0x10000;
-      out += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
-    } else {
-      out += String.fromCharCode(cp);
-    }
-  }
-  return out;
-}
 
 function bytesToLatin1(bytes: Uint8Array): string {
   let out = '';

@@ -1,6 +1,7 @@
 import { encodeMessageBase64, decodeMessageBase64 } from '../protocol/ProtobufCodec';
 import type { DeviceAnnouncement } from '../protocol/messageTypes';
 import { deviceIdentity } from '../security/DeviceIdentity';
+import { utf8Decode, utf8Encode } from '../../utils/utf8';
 
 const MDNS_PORT = 5353;
 const MDNS_MULTICAST_ADDR = '224.0.0.251';
@@ -59,7 +60,7 @@ export class MDNSDiscovery {
       const deviceId = deviceIdentity.getDeviceId();
       const announcement: DeviceAnnouncement = { type: 'DEVICE_ANNOUNCEMENT', deviceId, deviceName: this.config.serviceName,
         capabilities: { video: true, audio: true, resolutions: ['1280x720', '1920x1080', '3840x2160'], frameRates: [30, 60] } };
-      const payload = new TextEncoder().encode(JSON.stringify({ type: 'DEVICE_ANNOUNCEMENT', service: this.config.serviceName,
+      const payload = utf8Encode(JSON.stringify({ type: 'DEVICE_ANNOUNCEMENT', service: this.config.serviceName,
         deviceName: this.config.serviceName, port: this.config.port, data: encodeMessageBase64(announcement), deviceId }));
       this.socket.send(payload, 0, payload.length, MDNS_PORT, MDNS_MULTICAST_ADDR, error => { if (!error) this.onAnnouncementSent?.(); });
     } catch (error) { console.warn('Failed to send mDNS announcement:', error); }
@@ -68,7 +69,7 @@ export class MDNSDiscovery {
     const socket = this.socket; if (!socket) return;
     socket.on?.('message', (data: Uint8Array, info: { address: string }) => {
       try {
-        const message = JSON.parse(new TextDecoder().decode(data));
+        const message = JSON.parse(utf8Decode(data));
         if (message.type !== 'DEVICE_ANNOUNCEMENT' || typeof message.deviceId !== 'string') return;
         const announcement = message.data ? decodeMessageBase64(message.data, 'DEVICE_ANNOUNCEMENT') as DeviceAnnouncement : null;
         const device: DiscoveredDevice = { deviceId: message.deviceId, deviceName: announcement?.deviceName ?? message.deviceName ?? this.config.serviceName,

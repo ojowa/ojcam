@@ -36,8 +36,8 @@ class USBService : Service() {
         when (action) {
             ACTION_START_USB -> {
                 val deviceId = intent?.getStringExtra(EXTRA_DEVICE_ID) ?: ""
-                val localPort = intent?.getIntExtra(EXTRA_LOCAL_PORT, 8080)
-                val remotePort = intent?.getIntExtra(EXTRA_REMOTE_PORT, 8081)
+                val localPort = intent.getIntExtra(EXTRA_LOCAL_PORT, 8080)
+                val remotePort = intent.getIntExtra(EXTRA_REMOTE_PORT, 8081)
                 startUSBTransport(deviceId, localPort, remotePort)
             }
             ACTION_STOP_USB -> {

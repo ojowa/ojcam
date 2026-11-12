@@ -1,10 +1,8 @@
 import type { DeviceAnnouncement, StartSession, ControlCommand, Capabilities, VideoConfig, AudioConfig, ProtocolMessage } from './messageTypes';
 import { FieldTags, WireType } from './messageTypes';
+import { utf8Decode, utf8Encode } from '../../utils/utf8';
 export { createDeviceAnnouncement, createStartSession, createControlCommand } from './messageTypes';
 export type { DeviceAnnouncement, StartSession, ControlCommand, Capabilities, VideoConfig, AudioConfig, ProtocolMessage } from './messageTypes';
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 export function encodeVarint(value: number): Uint8Array {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('Varint must be a non-negative safe integer');
@@ -31,7 +29,7 @@ function concat(parts: Uint8Array[]): Uint8Array {
 function encodeBytes(value: Uint8Array): Uint8Array { return concat([encodeVarint(value.length), value]); }
 function encodeValue(value: number | string | Uint8Array, wire: number): Uint8Array {
   if (wire === WireType.Varint) return encodeVarint(value as number);
-  if (wire === WireType.LengthDelimited) return encodeBytes(typeof value === 'string' ? encoder.encode(value) : value as Uint8Array);
+  if (wire === WireType.LengthDelimited) return encodeBytes(typeof value === 'string' ? utf8Encode(value) : value as Uint8Array);
   throw new Error(`Unsupported wire type for encoding: ${wire}`);
 }
 function encodeField(tag: number, wire: number, value: number | string | Uint8Array): Uint8Array {
@@ -107,7 +105,7 @@ function fields(data: Uint8Array): Field[] {
   while (offset < data.length) { const [field, count] = readField(data, offset); if (count <= 0) throw new Error('Invalid protobuf field'); out.push(field); offset += count; }
   return out;
 }
-function str(f: Field): string { if (!(f.value instanceof Uint8Array)) throw new Error('Expected length-delimited string'); return decoder.decode(f.value); }
+function str(f: Field): string { if (!(f.value instanceof Uint8Array)) throw new Error('Expected length-delimited string'); return utf8Decode(f.value); }
 function num(f: Field): number { if (typeof f.value !== 'number') throw new Error('Expected varint'); return f.value; }
 function nested(f: Field): Field[] { if (!(f.value instanceof Uint8Array)) throw new Error('Expected nested message'); return fields(f.value); }
 function last(fs: Field[], tag: number): Field | undefined { return [...fs].reverse().find(f => f.tag === tag); }

@@ -4,12 +4,9 @@ import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
-import com.facebook.react.bridge.JavaScriptModule
-import java.util.Collections
-import java.util.List
 
 class OjowacamPackage : ReactPackage {
-    override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
+    override fun createNativeModules(reactContext: ReactApplicationContext): MutableList<NativeModule> {
         val camera = CameraModule(reactContext)
         val audio = AudioModule(reactContext)
         val encoder = EncoderModule(reactContext)
@@ -29,11 +26,11 @@ class OjowacamPackage : ReactPackage {
         // Camera YUV frames → external MediaCodec encoder.
         camera.onEncodedFrame = { i420 -> encoder.encodeFrame(i420) }
 
-        return listOf(camera, audio, encoder, webrtc, usb)
+        return mutableListOf(camera, audio, encoder, webrtc, usb)
     }
 
-    override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
-        return Collections.emptyList()
+    override fun createViewManagers(reactContext: ReactApplicationContext): MutableList<ViewManager<*, *>> {
+        return mutableListOf()
     }
 
 }

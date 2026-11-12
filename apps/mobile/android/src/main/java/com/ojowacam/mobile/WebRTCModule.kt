@@ -307,9 +307,11 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val pc = peerConnection ?: throw Exception("No peer connection")
             val id = if (trackId.isBlank()) "ojowacam-video" else trackId
 
-            videoSource?.let { src ->
-                videoTrack?.let { src.removeSink(it) }
+            videoTrack?.let { track ->
+                videoSink?.let(track::removeSink)
+                track.dispose()
             }
+            videoSource?.dispose()
             videoTrack = null
             videoSource = null
             videoSink = null

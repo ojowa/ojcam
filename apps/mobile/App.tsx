@@ -2,35 +2,24 @@ import React, { useEffect } from 'react';
 import { streamingService } from './src/services/StreamingService';
 import { StyleSheet, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, StackNavigationProp } from '@react-navigation/stack';
 import HomeScreen from './src/screens/HomeScreen';
 import CameraScreen from './src/screens/CameraScreen';
 import ConnectionScreen from './src/screens/ConnectionScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
-import * as Sentry from '@sentry/react-native';
 
-Sentry.init({
-  dsn: 'https://a2a213091348fa6425421241a2cfeb45@o4512328335753216.ingest.de.sentry.io/4512413680009296',
+export type RootStackParamList = {
+  Home: undefined;
+  Camera: undefined;
+  Connection: undefined;
+  Settings: undefined;
+};
 
-  // Adds more context data to events (IP address, cookies, user, etc.)
-  // For more information, visit: https://docs.sentry.io/platforms/react-native/data-management/data-collected/
-  sendDefaultPii: true,
+export type HomeScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Home'>;
 
-  // Enable Logs
-  enableLogs: true,
+const Stack = createStackNavigator<RootStackParamList>();
 
-  // Configure Session Replay
-  replaysSessionSampleRate: 0.1,
-  replaysOnErrorSampleRate: 1,
-  integrations: [Sentry.mobileReplayIntegration(), Sentry.feedbackIntegration()],
-
-  // uncomment the line below to enable Spotlight (https://spotlightjs.com)
-  // spotlight: __DEV__,
-});
-
-const Stack = createStackNavigator();
-
-export default Sentry.wrap(function App() {
+export default function App() {
   useEffect(() => {
     void streamingService.initialize();
   }, []);
@@ -48,7 +37,7 @@ export default Sentry.wrap(function App() {
       </Stack.Navigator>
     </NavigationContainer>
   );
-});
+}
 
 const styles = StyleSheet.create({
   container: {

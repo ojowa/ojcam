@@ -1,7 +1,11 @@
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { useNavigation } from '@react-navigation/native';
+import type { HomeScreenNavigationProp } from '../../App';
 
 export default function HomeScreen() {
+  const navigation = useNavigation<HomeScreenNavigationProp>();
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.card}>
@@ -10,7 +14,7 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.card}>
-        <TouchableOpacity style={styles.button}>
+        <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Camera')}>
           <Text style={styles.buttonText}>Start Camera</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.button}>

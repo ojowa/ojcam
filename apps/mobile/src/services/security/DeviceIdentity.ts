@@ -10,6 +10,8 @@
  * verifiable identity that the desktop receiver can authenticate.
  */
 
+import { utf8Decode, utf8Encode } from '../../utils/utf8';
+
 
 // ---------------------------------------------------------------------------
 // Platform storage adapter
@@ -180,7 +182,7 @@ export class DeviceIdentity {
 
         publicKeyJwk = publicKey as JsonWebKey;
         privateKeyBase64 = arrayBufferToBase64Url(
-          new TextEncoder().encode(JSON.stringify(privateKey))
+          utf8Encode(JSON.stringify(privateKey))
         );
       } catch (err) {
         console.warn('Web Crypto ECDSA unavailable, using software fallback', err);
@@ -191,7 +193,7 @@ export class DeviceIdentity {
     }
 
     const publicKeyBase64 = arrayBufferToBase64Url(
-      new TextEncoder().encode(JSON.stringify(publicKeyJwk))
+      utf8Encode(JSON.stringify(publicKeyJwk))
     );
     const deviceId = deriveDeviceId(publicKeyBase64);
 
@@ -231,7 +233,7 @@ export class DeviceIdentity {
     if (typeof crypto !== 'undefined' && typeof crypto.subtle !== 'undefined') {
       try {
         const privateKeyJwk: JsonWebKey = JSON.parse(
-          new TextDecoder().decode(base64ToArrayBuffer(this.keyPair.privateKey))
+          utf8Decode(new Uint8Array(base64ToArrayBuffer(this.keyPair.privateKey)))
         );
         const cryptoKey = await crypto.subtle.importKey(
           'jwk',
@@ -244,7 +246,7 @@ export class DeviceIdentity {
         const sig = await crypto.subtle.sign(
           { name: 'ECDSA', hash: { name: 'SHA-256' } },
           cryptoKey,
-          new TextEncoder().encode(payload)
+          utf8Encode(payload)
         );
         signature = arrayBufferToBase64Url(sig);
       } catch (err) {
@@ -271,7 +273,7 @@ export class DeviceIdentity {
     if (typeof crypto !== 'undefined' && typeof crypto.subtle !== 'undefined') {
       try {
         const publicKeyJwk: JsonWebKey = JSON.parse(
-          new TextDecoder().decode(base64ToArrayBuffer(signerPublicKey))
+          utf8Decode(new Uint8Array(base64ToArrayBuffer(signerPublicKey)))
         );
         const cryptoKey = await crypto.subtle.importKey(
           'jwk',
@@ -285,7 +287,7 @@ export class DeviceIdentity {
           { name: 'ECDSA', hash: { name: 'SHA-256' } },
           cryptoKey,
           base64ToArrayBuffer(signature),
-          new TextEncoder().encode(payload)
+          utf8Encode(payload)
         );
         return result;
       } catch (err) {
@@ -298,9 +300,8 @@ export class DeviceIdentity {
 
   private async hmacSign(payload: string): Promise<string> {
     const key = this.keyPair!.privateKey;
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(key);
-    const payloadData = encoder.encode(payload);
+    const keyData = utf8Encode(key);
+    const payloadData = utf8Encode(payload);
 
     if (typeof crypto !== 'undefined' && typeof crypto.subtle !== 'undefined') {
       try {
