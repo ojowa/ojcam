@@ -1,5 +1,5 @@
 /** UTF-8 helpers for Hermes, which does not provide TextEncoder/TextDecoder. */
-export function utf8Encode(value: string): Uint8Array {
+export function utf8Encode(value: string): Uint8Array<ArrayBuffer> {
   const bytes: number[] = [];
 
   for (let i = 0; i < value.length; i++) {
@@ -25,7 +25,11 @@ export function utf8Encode(value: string): Uint8Array {
     }
   }
 
-  return Uint8Array.from(bytes);
+  const result = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) {
+    result[i] = bytes[i];
+  }
+  return result as unknown as Uint8Array<ArrayBuffer>;
 }
 
 export function utf8Decode(bytes: Uint8Array): string {

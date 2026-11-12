@@ -325,7 +325,7 @@ export class DeviceIdentity {
       hash = (hash << 5) - hash + char;
       hash = hash & hash;
     }
-    return arrayBufferToBase64Url(encoder.encode(hash.toString()));
+    return arrayBufferToBase64Url(utf8Encode(hash.toString()));
   }
 
   async reset(): Promise<void> {
