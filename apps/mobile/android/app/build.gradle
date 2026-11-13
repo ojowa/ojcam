@@ -174,7 +174,10 @@ dependencies {
     debugImplementation("com.facebook.flipper:flipper-network-plugin:${FLIPPER_VERSION}") {
         exclude group:'com.squareup.okhttp3', module:'okhttp'
     }
-    debugImplementation("com.facebook.flipper:flipper-fresco-plugin:${FLIPPER_VERSION}")
+    // RN 0.73+: flipper fresco plugin moved to com.facebook.fresco and is versioned
+    // alongside Fresco. The old com.facebook.flipper:flipper-fresco-plugin:0.182.0
+    // references ImagePerfDataListener in its pre-3.0 package, which no longer exists.
+    debugImplementation("com.facebook.fresco:flipper-fresco-plugin:3.1.3")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
