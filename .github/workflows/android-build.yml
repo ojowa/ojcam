@@ -38,6 +38,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: apps/mobile/package-lock.json
       - name: Install dependencies
         run: |
           npm install
@@ -53,8 +54,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk
-          path: apps/mobile/android/build/outputs/apk/debug/com.ojowacam.mobile-debug.apk
-          if-no-files-found: continue
+          path: apps/mobile/android/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
       - name: Decode Android release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -79,10 +80,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk-release
-          path: apps/mobile/android/build/outputs/apk/release/com.ojowacam.mobile-release.apk
+          path: apps/mobile/android/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
       - name: Upload Android AAB
         if: env.ANDROID_KEYSTORE_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-aab
-          path: apps/mobile/android/build/outputs/bundle/release/com.ojowacam.mobile-release.aab
+          path: apps/mobile/android/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
