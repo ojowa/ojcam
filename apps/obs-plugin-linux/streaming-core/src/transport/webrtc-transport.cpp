@@ -58,13 +58,13 @@ static std::vector<uint8_t> ws_frame_text(const std::string& payload, uint8_t op
     frame.push_back(static_cast<uint8_t>(0x80 | (opcode & 0x0F))); // FIN + opcode
     uint64_t len = payload.size();
     if (len <= 125) {
-        frame.push_back(static_cast<uint8_t>(len));
+        frame.push_back(static_cast<uint8_t>(0x80 | len));
     } else if (len <= 65535) {
-        frame.push_back(0x7E);
+        frame.push_back(0x80 | 0x7E);
         frame.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
         frame.push_back(static_cast<uint8_t>(len & 0xFF));
     } else {
-        frame.push_back(0x7F);
+        frame.push_back(0x80 | 0x7F);
         for (int i = 7; i >= 0; --i)
             frame.push_back(static_cast<uint8_t>((len >> (i * 8)) & 0xFF));
     }
