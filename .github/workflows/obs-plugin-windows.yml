@@ -150,6 +150,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS installed to $env:OBS_INSTALL_PREFIX"
 
+      - name: Stage OBS headers and import lib for plugin
+        shell: pwsh
+        run: |
+          # cmake --install skips the Development component (headers + OBSConfig),
+          # so stage what the plugin CMakeLists manual fallback expects:
+          #   .deps/obs-studio/libobs  (headers) and .deps/obs-lib/obs.lib
+          New-Item -ItemType Directory -Force -Path .deps/obs-studio | Out-Null
+          Copy-Item -Recurse obs-studio/libobs .deps/obs-studio/libobs
+          New-Item -ItemType Directory -Force -Path .deps/obs-lib | Out-Null
+          Copy-Item obs-install/bin/64bit/obs.lib .deps/obs-lib/obs.lib
+          if (-not (Test-Path .deps/obs-studio/libobs/obs-module.h)) { throw 'obs-module.h staging failed' }
+          if (-not (Test-Path .deps/obs-lib/obs.lib)) { throw 'obs.lib staging failed' }
+          Write-Host "Staged OBS development files into .deps/"
+
       - name: Validate OBS installation (Windows)
         shell: pwsh
         run: |
