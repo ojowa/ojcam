@@ -1,7 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, PermissionsAndroid, Platform } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, PermissionsAndroid, Platform, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Camera, CameraType, FlashMode } from 'expo-camera';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { CameraService } from '../native/modules';
 import { streamingService } from '../services/StreamingService';
 import { CameraDevice } from '../native/modules';
@@ -31,16 +32,43 @@ export default function CameraScreen() {
   const [selectedCamera, setSelectedCamera] = React.useState<string>('0');
   const [facing, setFacing] = React.useState<'front' | 'back'>('back');
   const [torch, setTorch] = React.useState(false);
-  const [pairingCode, setPairingCode] = React.useState<string | null>(null);
+  const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>('portrait');
   const [streamError, setStreamError] = React.useState<string | null>(null);
   const [permission, setPermission] = React.useState<boolean | null>(null);
   const [previewReady, setPreviewReady] = React.useState(false);
   const cameraRef = React.useRef<Camera>(null);
   const startingRef = React.useRef(false);
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
+  // Reflect the actual orientation on mount (the app starts unlocked).
+  React.useEffect(() => {
+    ScreenOrientation.getOrientationAsync()
+      .then((o) => {
+        const landscape =
+          o === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
+          o === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
+        setOrientation(landscape ? 'landscape' : 'portrait');
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const toggleOrientation = async () => {
+    try {
+      if (orientation === 'portrait') {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        setOrientation('landscape');
+      } else {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        setOrientation('portrait');
+      }
+    } catch (error) {
+      console.warn('Unable to change orientation:', error);
+    }
+  };
 
   React.useEffect(() => {
     const handleState = (state: ReturnType<typeof streamingService.getState>) => {
-      setPairingCode(state.pairingCode);
       setStreamError(state.error);
       setIsStreaming(state.isStreaming);
       // Service stopped/failed outside this screen — release camera ownership.
@@ -106,7 +134,7 @@ export default function CameraScreen() {
       const success = await streamingService.startStreaming(
         selectedCamera,
         {
-          resolution: '1920x1080',
+          resolution: '3840x2160',
           fps: 30,
           bitrate: 8000000,
           codec: 'H264',
@@ -171,7 +199,7 @@ export default function CameraScreen() {
         ) : null}
       </View>
 
-      <View style={styles.controls}>
+      <View style={[styles.controls, isLandscape && styles.controlsLandscape]}>
         <View style={styles.row}>
           <TouchableOpacity style={styles.controlButton} onPress={loadCameras}>
             <Text>Refresh Cameras</Text>
@@ -184,29 +212,27 @@ export default function CameraScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.row}>
+        <View style={[styles.row, isLandscape && styles.rowLandscape]}>
           <Text style={styles.label}>Camera: {selectedCamera} ({facing})</Text>
         </View>
 
-        <View style={styles.row}>
+        <View style={[styles.row, isLandscape && styles.rowLandscape]}>
+          <TouchableOpacity style={[styles.controlButton, isLandscape && styles.controlButtonCompact]} onPress={toggleOrientation}>
+            <Text>{orientation === 'portrait' ? 'Switch to Landscape' : 'Switch to Portrait'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={[styles.row, isLandscape && styles.rowLandscape]}>
           <TouchableOpacity style={[styles.controlButton, isStreaming && styles.streamingButton]} onPress={toggleStreaming}>
             <Text>{isStreaming ? 'Stop Streaming' : 'Start Streaming'}</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.row}>
+        <View style={[styles.row, isLandscape && styles.rowLandscape]}>
           <Text style={styles.label}>Streaming: {isStreaming ? 'LIVE' : 'IDLE'}</Text>
         </View>
 
-        {pairingCode ? (
-          <View style={styles.pairingBanner}>
-            <Text style={styles.pairingLabel}>Pairing code</Text>
-            <Text style={styles.pairingCode}>{pairingCode}</Text>
-            <Text style={styles.pairingHint}>Enter this code on your desktop to complete pairing</Text>
-          </View>
-        ) : null}
-
-        {streamError && !pairingCode ? (
+        {streamError ? (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>{streamError}</Text>
           </View>
@@ -268,10 +294,17 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 16,
   },
+  controlsLandscape: {
+    padding: 10,
+    gap: 8,
+  },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 16,
+  },
+  rowLandscape: {
+    marginBottom: 8,
   },
   controlButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
@@ -281,6 +314,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginHorizontal: 4,
   },
+  controlButtonCompact: {
+    padding: 10,
+  },
   streamingButton: {
     backgroundColor: '#FF3B30',
   },
@@ -288,33 +324,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     marginBottom: 8,
-  },
-  pairingBanner: {
-    backgroundColor: 'rgba(0, 122, 255, 0.25)',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#007AFF',
-  },
-  pairingLabel: {
-    color: '#fff',
-    fontSize: 13,
-    opacity: 0.8,
-    marginBottom: 4,
-  },
-  pairingCode: {
-    color: '#fff',
-    fontSize: 32,
-    fontWeight: '700',
-    letterSpacing: 6,
-    marginBottom: 6,
-  },
-  pairingHint: {
-    color: '#fff',
-    fontSize: 12,
-    opacity: 0.8,
-    textAlign: 'center',
   },
   errorBanner: {
     backgroundColor: 'rgba(255, 59, 48, 0.25)',
