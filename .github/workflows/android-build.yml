@@ -50,12 +50,6 @@ jobs:
           echo "Building Android APK with Gradle 8.0..."
           sudo apt-get update && sudo apt-get install -y unzip zip
           cd apps/mobile/android && chmod +x gradlew && ./gradlew assembleDebug
-      - name: Upload Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ojowacam-android-apk
-          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
       - name: Decode Android release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -75,17 +69,34 @@ jobs:
             cd apps/mobile/android
             ./gradlew assembleRelease bundleRelease
           fi
+      - name: Stage artifacts into publish folder
+        run: |
+          mkdir -p ci-output/apk/publish ci-output/apk-release/publish ci-output/aab/publish
+          cp apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk ci-output/apk/publish/
+          if [ -f apps/mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk ci-output/apk-release/publish/
+          fi
+          if [ -f apps/mobile/android/app/build/outputs/bundle/release/app-release.aab ]; then
+            cp apps/mobile/android/app/build/outputs/bundle/release/app-release.aab ci-output/aab/publish/
+          fi
+          find ci-output -type f
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ojowacam-android-apk
+          path: ci-output/apk/
+          if-no-files-found: error
       - name: Upload Android release APK
         if: env.ANDROID_KEYSTORE_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk-release
-          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          path: ci-output/apk-release/
           if-no-files-found: error
       - name: Upload Android AAB
         if: env.ANDROID_KEYSTORE_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-aab
-          path: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          path: ci-output/aab/
           if-no-files-found: error

@@ -83,3 +83,10 @@ yarn.lock
 **/build/
 !**/build.gradle
 !**/build.gradle.kts
+
+# Build outputs (deployed via GitHub Actions artifacts, not tracked)
+publish/
+
+# App runtime logs
+apps/mobile/app_log.txt
+apps/mobile/crash_log.txt
