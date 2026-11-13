@@ -48,29 +48,43 @@ jobs:
         shell: pwsh
         run: |
           $sdkLibRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib'
-          $candidates = @(
-            Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler_47.lib -Recurse -File |
-              Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler_47\\.lib$' } |
-              Sort-Object { [version]$_.Directory.Parent.Parent.Name } -Descending |
-              Select-Object -First 1
-            Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler.lib -Recurse -File |
-              Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler\\.lib$' } |
-              Sort-Object { [version]$_.Directory.Parent.Parent.Name } -Descending |
-              Select-Object -First 1
-          ) | Where-Object { $_ }
+          $candidates = @()
+          if (Test-Path $sdkLibRoot) {
+            $candidates = @(
+              Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler_47.lib -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler_47\.lib$' } |
+                Sort-Object { try { [version]$_.Directory.Parent.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
+                Select-Object -First 1
+              Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler.lib -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler\.lib$' } |
+                Sort-Object { try { [version]$_.Directory.Parent.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
+                Select-Object -First 1
+            ) | Where-Object { $_ }
+          }
+
+          if (-not $candidates) {
+            Write-Host "No Windows SDK d3dcompiler lib found to patch; relying on the Visual Studio toolset default library path."
+            exit 0
+          }
 
           $d3dCompiler = $null
           foreach ($candidate in $candidates) {
-            $symbols = & dumpbin /symbols $candidate.FullName 2>$null | Select-String -Pattern 'D3DCompile|D3DCreateBlob'
-            if ($symbols) {
-              $d3dCompiler = $candidate
-              break
+            if (Get-Command dumpbin -ErrorAction SilentlyContinue) {
+              $symbols = & dumpbin /symbols $candidate.FullName 2>$null | Select-String -Pattern 'D3DCompile|D3DCreateBlob'
+              if (-not $symbols) {
+                Write-Host "Skipping $($candidate.FullName): missing D3DCompile/D3DCreateBlob symbols"
+                continue
+              }
+            } else {
+              Write-Host "dumpbin not on PATH; trusting SDK layout for $($candidate.FullName)"
             }
-            Write-Host "Skipping $($candidate.FullName): missing D3DCompile/D3DCreateBlob symbols"
+            $d3dCompiler = $candidate
+            break
           }
 
           if (-not $d3dCompiler) {
-            throw "Could not locate an x64 Windows SDK d3dcompiler_47.lib or d3dcompiler.lib under $sdkLibRoot that exports D3DCompile and D3DCreateBlob"
+            Write-Host "No verifiable d3dcompiler lib; relying on the Visual Studio toolset default library path."
+            exit 0
           }
 
           $cmakeFile = 'obs-studio/libobs-d3d11/CMakeLists.txt'
