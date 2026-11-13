@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension">
+  <!-- WiX Burn bootstrapper: single EXE installer that wraps Ojowacam.ObsPlugin.msi.
+       candle: -dPluginMsi=<path to Ojowacam.ObsPlugin.msi> -ext WixBalExtension
+       light:  -ext WixBalExtension -->
+  <Bundle Name="Ojowacam OBS Plugin"
+          Version="1.0.0"
+          Manufacturer="Ojowacam Team"
+          UpgradeCode="EB6D5093-B3D8-4F4D-A64D-1CB4C942B542"
+          HelpUrl="https://github.com/ojowa/ojcam"
+          AboutUrl="https://github.com/ojowa/ojcam">
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
+      <bal:WixStandardBootstrapperApplication LicenseUrl="https://github.com/ojowa/ojcam" />
+    </BootstrapperApplicationRef>
+
+    <Chain>
+      <MsiPackage SourceFile="$(var.PluginMsi)" Vital="yes" Compressed="yes" />
+    </Chain>
+  </Bundle>
+</Wix>
