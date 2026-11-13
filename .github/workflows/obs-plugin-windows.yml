@@ -188,7 +188,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $pluginStage 'data') | Out-Null
           Copy-Item -LiteralPath $pluginDll -Destination (Join-Path $pluginStage 'bin/64bit/ojowacam-obs.dll')
           Copy-Item -LiteralPath $moduleJson -Destination (Join-Path $pluginStage 'data/module.json')
-          candle.exe "-dPluginDir=$pluginStage" -out apps/obs-plugin-windows/build/ojowacam-obs-plugin.wixobj infrastructure/installers/ojowacam-obs-plugin.wxs
+          candle.exe "-dPluginDir=$pluginStage" -out apps/obs-plugin-windows/build/ojowacam-obs-plugin.wixobj apps/obs-plugin-windows/installers/ojowacam-obs-plugin.wxs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           light.exe -out apps/obs-plugin-windows/build/Ojowacam.ObsPlugin.msi apps/obs-plugin-windows/build/ojowacam-obs-plugin.wixobj
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
