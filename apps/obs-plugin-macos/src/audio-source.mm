@@ -34,14 +34,9 @@ void *ojowacam_audio_create(obs_data_t *settings, obs_source_t *source)
 
     const char *deviceId = obs_data_get_string(settings, "device_id");
     const char *signalingUrl = obs_data_get_string(settings, "signaling_url");
-    const char *pairingCode = obs_data_get_string(settings, "pairing_code");
 
     std::string resolvedDeviceId = deviceId ? deviceId : "";
     std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
-    std::string resolvedPairingCode = pairingCode ? pairingCode : "";
-    if (resolvedSignalingUrl.empty() && !resolvedPairingCode.empty()) {
-        resolvedSignalingUrl = "ws://localhost:8765";
-    }
 
     if (!resolvedSignalingUrl.empty()) {
         data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:nil audioSource:source];
@@ -71,7 +66,6 @@ obs_properties_t *ojowacam_audio_properties(void *data)
 {
     auto *props = obs_properties_create();
 
-    obs_properties_add_text(props, "pairing_code", "Pairing Code (from phone)", OBS_TEXT_DEFAULT);
     obs_properties_add_text(props, "device_id", "Device ID", OBS_TEXT_DEFAULT);
     obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://phone-ip:8765)", OBS_TEXT_DEFAULT);
 
@@ -85,14 +79,9 @@ obs_properties_t *ojowacam_audio_properties(void *data)
             obs_data_t *settings = obs_source_get_settings(data->source);
             const char *deviceId = obs_data_get_string(settings, "device_id");
             const char *signalingUrl = obs_data_get_string(settings, "signaling_url");
-            const char *pairingCode = obs_data_get_string(settings, "pairing_code");
 
             std::string resolvedDeviceId = deviceId ? deviceId : "";
             std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
-            std::string resolvedPairingCode = pairingCode ? pairingCode : "";
-            if (resolvedSignalingUrl.empty() && !resolvedPairingCode.empty()) {
-                resolvedSignalingUrl = "ws://localhost:8765";
-            }
 
             if (!resolvedSignalingUrl.empty()) {
                 data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:nil audioSource:data->source];

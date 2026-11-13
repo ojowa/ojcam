@@ -35,6 +35,10 @@ struct StreamReceiver::Impl {
     // Frame converter format (set from SPS or default)
     VideoPixelFormat video_format_ = VideoPixelFormat::Unknown;
 
+    // Last video size pushed to OBS (for onVideoSizeChanged)
+    int last_width_ = 0;
+    int last_height_ = 0;
+
     Impl() = default;
     ~Impl() {
         stop_reconnect_.store(true, std::memory_order_release);
@@ -245,13 +249,15 @@ bool StreamReceiver::connect(const std::string& device_id,
     return true;
 }
 
-void StreamReceiver::setPairingCode(const std::string& pairing_code) {
-    impl_->transport->setPairingCode(pairing_code);
-}
-
 void StreamReceiver::pushVideoFrameToOBS(const VideoFrame& frame) {
     if (!impl_->video_source) return;
     if (frame.data.empty() || frame.width <= 0 || frame.height <= 0) return;
+
+    if (frame.width != impl_->last_width_ || frame.height != impl_->last_height_) {
+        impl_->last_width_ = frame.width;
+        impl_->last_height_ = frame.height;
+        if (onVideoSizeChanged) onVideoSizeChanged(frame.width, frame.height);
+    }
 
     if (frame.format != VideoPixelFormat::Unknown) {
         impl_->frame_converter->setFormat(frame.format);

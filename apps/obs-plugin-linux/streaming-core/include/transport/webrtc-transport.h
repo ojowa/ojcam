@@ -16,10 +16,6 @@ public:
     bool sendAudioFrame(const AudioFrame& frame) override;
     bool isConnected() const override;
 
-    // Pairing: the source's configured pairing code must match the phone's
-    // PAIRING_REQUEST or the request is rejected.
-    void setPairingCode(const std::string& pairing_code);
-
     void setRemoteDescription(const std::string& type, const std::string& sdp);
     void addIceCandidate(const std::string& candidate);
 

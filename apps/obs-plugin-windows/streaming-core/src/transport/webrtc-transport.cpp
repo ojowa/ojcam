@@ -273,7 +273,6 @@ struct WebRTCTransport::Impl {
 
     // Signaling session state (guarded by session_mutex)
     mutable std::mutex session_mutex;
-    std::string pairing_code;
     std::string session_token;
     std::string pending_session_id;
 
@@ -295,7 +294,6 @@ struct WebRTCTransport::Impl {
 
     // Signaling session state (guarded by session_mutex)
     mutable std::mutex session_mutex;
-    std::string pairing_code;
     std::string session_token;
     std::string pending_session_id;
 
@@ -319,7 +317,6 @@ struct WebRTCTransport::Impl {
 
     // Signaling session state (guarded by session_mutex)
     mutable std::mutex session_mutex;
-    std::string pairing_code;
     std::string session_token;
     std::string pending_session_id;
 
@@ -409,11 +406,6 @@ bool WebRTCTransport::isConnected() const {
     return connected_;
 }
 
-void WebRTCTransport::setPairingCode(const std::string& pairing_code) {
-    std::lock_guard<std::mutex> lock(impl_->session_mutex);
-    impl_->pairing_code = pairing_code;
-}
-
 std::string WebRTCTransport::generateSessionToken() {
     static const char* hex = "0123456789abcdef";
     std::string token;
@@ -494,36 +486,23 @@ void WebRTCTransport::sendStartSessionAck(const std::string& session_id) {
 }
 
 void WebRTCTransport::handlePairingRequest(const std::string& message) {
-    const std::string request_code = extractJsonField(message, "pairingCode");
     const std::string device_id = extractJsonField(message, "deviceId");
-    std::string expected;
-    {
-        std::lock_guard<std::mutex> lock(impl_->session_mutex);
-        expected = impl_->pairing_code;
-    }
 
-    const bool matched = !expected.empty() && request_code == expected;
-    std::string token;
-    if (matched) {
-        token = generateSessionToken();
+    // Seamless session: any peer that reaches the signaling server is trusted.
+    // Mint a session token and accept immediately — no pairing code.
+    const std::string token = generateSessionToken();
+    {
         std::lock_guard<std::mutex> lock(impl_->session_mutex);
         impl_->session_token = token;
         impl_->pending_session_id.clear();
     }
 
     std::ostringstream msg;
-    msg << "{\"type\":\"PAIRING_RESPONSE\",\"success\":" << (matched ? "true" : "false")
-        << ",\"deviceId\":\"" << escapeJson(device_id)
-        << "\",\"pairingCode\":\"" << escapeJson(request_code) << "\"";
-    if (matched) {
-        msg << ",\"sessionToken\":\"" << escapeJson(token) << "\"";
-    } else {
-        msg << ",\"errorMessage\":\"" << escapeJson("Pairing code mismatch") << "\"";
-    }
-    msg << "}";
+    msg << "{\"type\":\"PAIRING_RESPONSE\",\"success\":true"
+        << ",\"deviceId\":\"" << escapeJson(device_id) << "\""
+        << ",\"sessionToken\":\"" << escapeJson(token) << "\"}";
     if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
-    blog(matched ? LOG_INFO : LOG_WARNING, "[Ojowacam] Pairing request %s (device %s)",
-         matched ? "accepted" : "rejected", device_id.c_str());
+    blog(LOG_INFO, "[Ojowacam] Session established with device %s", device_id.c_str());
 }
 
 void WebRTCTransport::setRemoteDescription(const std::string& type, const std::string& sdp) {

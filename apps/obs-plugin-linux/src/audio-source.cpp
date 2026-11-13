@@ -35,18 +35,12 @@ void *ojowacam_audio_create(obs_data_t *settings, obs_source_t *source)
 
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
-    const char* pairing_code = obs_data_get_string(settings, "pairing_code");
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
-    std::string resolved_pairing_code = pairing_code ? pairing_code : "";
-    if (resolved_signaling_url.empty() && !resolved_pairing_code.empty()) {
-        resolved_signaling_url = "ws://localhost:8765";
-    }
 
     if (!resolved_signaling_url.empty()) {
         data->stream_receiver = new ojowacam::StreamReceiver(nullptr, source);
-        data->stream_receiver->setPairingCode(resolved_pairing_code);
         data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
     }
 
@@ -58,7 +52,6 @@ obs_properties_t *ojowacam_audio_properties(void *data)
     auto *props = obs_properties_create();
     UNUSED_PARAMETER(data);
 
-    obs_properties_add_text(props, "pairing_code", "Pairing Code (from phone)", OBS_TEXT_DEFAULT);
     obs_properties_add_text(props, "device_id", "Device ID", OBS_TEXT_DEFAULT);
     obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://phone-ip:8765)", OBS_TEXT_DEFAULT);
     obs_properties_add_button(props, "connect", "Connect to Device", [](obs_properties_t*, obs_property_t*, void* data) {
@@ -70,20 +63,14 @@ obs_properties_t *ojowacam_audio_properties(void *data)
         obs_data_t *settings = obs_source_get_settings(d->source);
         const char *device_id = obs_data_get_string(settings, "device_id");
         const char *signaling_url = obs_data_get_string(settings, "signaling_url");
-        const char *pairing_code = obs_data_get_string(settings, "pairing_code");
 
         std::string resolved_device_id = device_id ? device_id : "";
         std::string resolved_signaling_url = signaling_url ? signaling_url : "";
-        std::string resolved_pairing_code = pairing_code ? pairing_code : "";
-        if (resolved_signaling_url.empty() && !resolved_pairing_code.empty()) {
-            resolved_signaling_url = "ws://localhost:8765";
-        }
 
         if (!resolved_signaling_url.empty()) {
             if (!d->stream_receiver) {
                 d->stream_receiver = new ojowacam::StreamReceiver(nullptr, d->source);
             }
-            d->stream_receiver->setPairingCode(resolved_pairing_code);
             d->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
         }
         obs_data_release(settings);

@@ -14,7 +14,6 @@
 @property (nonatomic) uint32_t height;
 @property (nonatomic) OjowacamStreamReceiver *streamReceiver;
 @property (nonatomic) CVPixelBufferRef currentFrame;
-@property (nonatomic) NSString *pairingCode;
 @property (nonatomic) BOOL connected;
 @end
 
@@ -44,20 +43,12 @@ void *ojowacam_camera_create(obs_data_t *settings, obs_source_t *source)
     data->height = 1080;
     data->currentFrame = nullptr;
     data->connected = NO;
-    data->pairingCode = nil;
 
     const char *deviceId = obs_data_get_string(settings, "device_id");
     const char *signalingUrl = obs_data_get_string(settings, "signaling_url");
-    const char *pairingCode = obs_data_get_string(settings, "pairing_code");
 
     std::string resolvedDeviceId = deviceId ? deviceId : "";
     std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
-    if (pairingCode && *pairingCode) {
-        resolvedDeviceId = pairingCode;
-        if (resolvedSignalingUrl.empty()) {
-            resolvedSignalingUrl = "ws://localhost:8765";
-        }
-    }
 
 
 void ojowacam_camera_destroy(void *data)
@@ -104,22 +95,15 @@ void ojowacam_camera_update(void *data, obs_data_t *settings)
 
     const char *deviceId = obs_data_get_string(settings, "device_id");
     const char *signalingUrl = obs_data_get_string(settings, "signaling_url");
-    const char *pairingCode = obs_data_get_string(settings, "pairing_code");
 
     std::string resolvedDeviceId = deviceId ? deviceId : "";
     std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
-    if (pairingCode && *pairingCode) {
-        resolvedDeviceId = pairingCode;
-        if (resolvedSignalingUrl.empty()) {
-            resolvedSignalingUrl = "ws://localhost:8765";
-        }
-    }
 
     if (d->streamReceiver) {
         [d->streamReceiver disconnect];
     }
 
-    if (!resolvedDeviceId.empty() && !resolvedSignalingUrl.empty()) {
+    if (!resolvedSignalingUrl.empty()) {
         d->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:d->source audioSource:nil];
         [d->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
         d->connected = d->streamReceiver.isConnected;
@@ -131,8 +115,6 @@ void ojowacam_camera_update(void *data, obs_data_t *settings)
 obs_properties_t *ojowacam_camera_properties(void *data)
 {
     auto *props = obs_properties_create();
-
-    obs_properties_add_text(props, "pairing_code", "Pairing Code (QR/manual)", OBS_TEXT_DEFAULT);
 
     obs_property_t *device_list = obs_properties_add_list(
         props, "device_id", "Device", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -177,7 +159,7 @@ bool ojowacam_camera_get_default_size(obs_data_t *settings, uint32_t *cx, uint32
     *cy = 1080;
     return true;
 }
-    if (!resolvedDeviceId.empty() && !resolvedSignalingUrl.empty()) {
+    if (!resolvedSignalingUrl.empty()) {
         data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:source audioSource:nil];
         [data->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
         data->connected = data->streamReceiver.isConnected;

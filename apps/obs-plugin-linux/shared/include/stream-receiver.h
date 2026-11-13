@@ -8,6 +8,8 @@
 #include <obs-module.h>
 #include <string>
 #include <memory>
+#include <functional>
+#include <cstdint>
 
 namespace ojowacam {
 
@@ -19,8 +21,9 @@ public:
     bool connect(const std::string& device_id, const std::string& signaling_url);
     void disconnect();
 
-    // Pairing code the phone's PAIRING_REQUEST must match (before connect).
-    void setPairingCode(const std::string& pairing_code);
+    // Fires (from the decode thread) whenever the incoming video size changes
+    // so the source can report the live dimensions to OBS.
+    std::function<void(uint32_t, uint32_t)> onVideoSizeChanged;
 
     void setVideoSource(obs_source_t* source);
     void setAudioSource(obs_source_t* source);
