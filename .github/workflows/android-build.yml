@@ -54,7 +54,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk
-          path: apps/mobile/android/build/outputs/apk/debug/app-debug.apk
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Decode Android release keystore
         env:
@@ -80,12 +80,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk-release
-          path: apps/mobile/android/build/outputs/apk/release/app-release.apk
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
       - name: Upload Android AAB
         if: env.ANDROID_KEYSTORE_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-aab
-          path: apps/mobile/android/build/outputs/bundle/release/app-release.aab
+          path: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
