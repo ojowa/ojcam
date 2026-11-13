@@ -1,3 +1,4 @@
+import './src/utils/polyfills';
 import React, { useEffect } from 'react';
 import { streamingService } from './src/services/StreamingService';
 import { StyleSheet, Text, View } from 'react-native';
