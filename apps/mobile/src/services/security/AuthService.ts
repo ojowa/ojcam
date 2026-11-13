@@ -1,5 +1,4 @@
 import { deviceIdentity } from './DeviceIdentity';
-import { pairingService } from './PairingService';
 
 const SESSION_BOUND_TYPES = ['OFFER', 'ANSWER', 'ICE_CANDIDATE', 'START_SESSION'];
 
@@ -76,6 +75,6 @@ export class AuthService {
   isAuthenticated(): boolean { return this.getSession()?.authenticated === true; }
   getAuthToken(): string | null { return this.getSession()?.token ?? null; }
   getSessionTTL(): number { const session = this.getSession(); return session ? Math.max(0, Math.ceil((session.expiresAt - Date.now()) / 1000)) : 0; }
-  isPaired(): boolean { return pairingService.getPendingPairings().length === 0 && this.isAuthenticated(); }
+  isPaired(): boolean { return this.isAuthenticated(); }
 }
 export const authService = new AuthService();

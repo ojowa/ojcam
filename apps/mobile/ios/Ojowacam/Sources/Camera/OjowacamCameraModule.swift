@@ -16,6 +16,8 @@ class OjowacamCameraModule: RCTEventEmitter {
     private var videoDevice: AVCaptureDevice?
     private var isStreaming = false
     private var currentCameraPosition: AVCaptureDevice.Position = .back
+    private var captureWidth = 0
+    private var captureHeight = 0
 
     private var videoEncoder: OjowacamVideoEncoder?
     private var videoOutputQueue: DispatchQueue?
@@ -69,7 +71,8 @@ class OjowacamCameraModule: RCTEventEmitter {
     @objc
     func startCapture(_ cameraId: String, width: NSNumber, height: NSNumber, fps: NSNumber, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
         guard !isStreaming else {
-            resolve(true)
+            resolve(["width": captureWidth > 0 ? captureWidth : width.intValue,
+                     "height": captureHeight > 0 ? captureHeight : height.intValue])
             return
         }
 
@@ -91,23 +94,38 @@ class OjowacamCameraModule: RCTEventEmitter {
                 return
             }
 
-
+            // Choose the best supported format: exact match wins, otherwise the
+            // closest by aspect ratio then pixel area (4K may be unavailable).
+            let reqW = width.intValue
+            let reqH = height.intValue
+            let reqAspect = Double(reqW) / Double(reqH)
             var bestFormat: AVCaptureDevice.Format?
+            var bestScore = Double.greatestFiniteMagnitude
             for format in device.formats {
                 let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                if Int(dimensions.width) == width.intValue && Int(dimensions.height) == height.intValue {
+                var score = abs(Double(dimensions.width) / Double(dimensions.height) - reqAspect) * 10_000
+                score += abs(Double(dimensions.width) * Double(dimensions.height) - Double(reqW) * Double(reqH)) / 1_000_000
+                if Int(dimensions.width) == reqW && Int(dimensions.height) == reqH {
+                    score = -1
+                }
+                if score < bestScore {
+                    bestScore = score
                     bestFormat = format
-                    break
                 }
             }
 
+            var outW = reqW
+            var outH = reqH
             if let format = bestFormat {
+                try device.lockForConfiguration()
                 device.activeFormat = format
                 device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: fps.int32Value)
                 device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: fps.int32Value)
+                device.unlockForConfiguration()
+                let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                outW = Int(dimensions.width)
+                outH = Int(dimensions.height)
             }
-
-            device.unlockForConfiguration()
 
             let session = AVCaptureSession()
             session.sessionPreset = .inputPriority
@@ -142,8 +160,8 @@ class OjowacamCameraModule: RCTEventEmitter {
             self.captureSession = session
 
             let encoder = OjowacamVideoEncoder(
-                width: width.intValue,
-                height: height.intValue,
+                width: outW,
+                height: outH,
                 bitrate: 8000000,
                 fps: fps.intValue
             )
@@ -157,9 +175,11 @@ class OjowacamCameraModule: RCTEventEmitter {
 
             session.startRunning()
             self.isStreaming = true
+            self.captureWidth = outW
+            self.captureHeight = outH
 
             sendEvent(withName: "onCameraStatusChanged", body: ["status": "streaming"])
-            resolve(true)
+            resolve(["width": outW, "height": outH])
 
         } catch {
             reject("CAMERA_ERROR", error.localizedDescription, error)
@@ -176,6 +196,8 @@ class OjowacamCameraModule: RCTEventEmitter {
         videoEncoder = nil
         videoOutputQueue = nil
         isStreaming = false
+        captureWidth = 0
+        captureHeight = 0
 
         sendEvent(withName: "onCameraStatusChanged", body: ["status": "stopped"])
         resolve(true)

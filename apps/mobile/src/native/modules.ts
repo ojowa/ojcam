@@ -22,8 +22,23 @@ export class CameraService {
     return cameras as CameraDevice[];
   }
 
-  static async startCapture(cameraId: string, width: number, height: number, fps: number): Promise<boolean> {
-    return OjowacamCamera.startCapture(cameraId, width, height, fps);
+  /**
+   * Start camera capture. Resolves with the ACTUAL frame size in use — the
+   * native side may negotiate a smaller size than requested when the sensor
+   * does not support it (e.g. 4K on a front-facing lens).
+   */
+  static async startCapture(
+    cameraId: string,
+    width: number,
+    height: number,
+    fps: number,
+  ): Promise<{ width: number; height: number }> {
+    const result = await OjowacamCamera.startCapture(cameraId, width, height, fps);
+    if (result && typeof result === 'object' && typeof result.width === 'number') {
+      return { width: result.width, height: result.height };
+    }
+    // Older native builds resolve(true) — assume the requested size held.
+    return { width, height };
   }
 
   static async stopCapture(): Promise<boolean> {

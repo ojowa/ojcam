@@ -14,7 +14,6 @@ import {
 import { PermissionsAndroid, Platform } from 'react-native';
 import { signalingService } from './signaling/SignalingService';
 import { authService } from './security/AuthService';
-import { pairingService } from './security/PairingService';
 import { deviceIdentity } from './security/DeviceIdentity';
 import { initializeSecureStorage } from './security/SecureStorageAdapter';
 import { connectionConfig } from './config/ConnectionConfig';
@@ -31,11 +30,9 @@ export interface StreamingState {
   isStreaming: boolean;
   isConnected: boolean;
   isAuthenticated: boolean;
-  isPaired: boolean;
   currentCameraId: string | null;
   sessionTTL: number;
   error: string | null;
-  pairingCode: string | null;
 }
 
 export const defaultStreamingConfig: StreamingConfig = {
@@ -50,7 +47,7 @@ export class StreamingService {
   private streamResourcesStarted = false;
   private currentCameraId: string | null = null;
   private streamConfig: StreamConfig = {
-    resolution: '1920x1080',
+    resolution: '3840x2160',
     fps: 30,
     bitrate: 8000000,
     codec: 'H264',
@@ -65,11 +62,9 @@ export class StreamingService {
     isStreaming: false,
     isConnected: false,
     isAuthenticated: false,
-    isPaired: false,
     currentCameraId: null,
     sessionTTL: 0,
     error: null,
-    pairingCode: null,
   };
 
   private onStateChange?: (state: StreamingState) => void;
@@ -86,7 +81,6 @@ export class StreamingService {
       onDisconnected: () => {
         this.state.isConnected = false;
         this.state.isAuthenticated = false;
-        this.state.isPaired = false;
         if (this.isStreaming) { void this.stopStreaming(); }
         this.notifyStateChange();
       },
@@ -95,19 +89,11 @@ export class StreamingService {
         this.notifyStateChange();
       },
       onMessage: (message) => this.handleIncomingSignalingMessage(message),
-      onPairingCodeGenerated: (code) => {
-        this.state.pairingCode = code.code;
-        this.state.error = `Pairing code: ${code.code}`;
-        this.notifyStateChange();
-      },
       onPairingCompleted: (success, sessionToken, error) => {
-        this.state.pairingCode = null;
         if (success && sessionToken) {
-          this.state.isAuthenticated = true;
-          this.state.isPaired = true;
           this.state.error = null;
         } else {
-          this.state.error = error || 'Pairing failed';
+          this.state.error = error || 'Session handshake failed';
         }
         this.notifyStateChange();
         const waiter = this.pairingWaiter;
@@ -150,7 +136,6 @@ export class StreamingService {
       });
       this.state.isConnected = signalingService.isConnected();
       this.state.isAuthenticated = authService.isAuthenticated();
-      this.state.isPaired = authService.isPaired();
       this.state.sessionTTL = authService.getSessionTTL();
       return true;
     } catch (error) {
@@ -196,8 +181,6 @@ export class StreamingService {
     signalingService.disconnect();
     this.state.isConnected = false;
     this.state.isAuthenticated = false;
-    this.state.isPaired = false;
-    this.state.pairingCode = null;
     this.notifyStateChange();
   }
 
@@ -215,21 +198,9 @@ export class StreamingService {
     return h || 1080;
   }
 
-  async requestPairing(): Promise<string> {
-    const { code } = await signalingService.requestPairing();
-    this.state.pairingCode = code;
-    this.state.error = `Pairing code: ${code}`;
-    this.notifyStateChange();
-    return code;
-  }
-
-  async submitPairingCode(code: string): Promise<void> {
-    const trimmed = code.trim();
-    if (!trimmed) throw new Error('Pairing code is required');
-    await signalingService.submitPairingCode(trimmed);
-    this.state.pairingCode = trimmed;
-    this.state.error = `Waiting for desktop to confirm code ${trimmed}...`;
-    this.notifyStateChange();
+  /** Request a session from the connected peer (auto-accepted by OBS). */
+  async requestPairing(): Promise<void> {
+    await signalingService.requestPairing();
   }
 
   private waitForPairing(timeoutMs: number): Promise<boolean> {
@@ -278,13 +249,12 @@ export class StreamingService {
       if (!authService.isAuthenticated()) {
         if (this.config.autoPair) {
           await this.requestPairing();
-          const paired = await this.waitForPairing(10 * 60 * 1000);
-          this.state.pairingCode = null;
+          const paired = await this.waitForPairing(30 * 1000);
           if (!paired || !authService.isAuthenticated()) {
-            throw new Error('Authentication required. Please complete pairing first.');
+            throw new Error('Unable to establish a session with OBS.');
           }
         } else {
-          throw new Error('Not authenticated. Pairing required before streaming.');
+          throw new Error('Not authenticated. Session required before streaming.');
         }
       }
       // Android runtime permissions must be granted before native capture.
@@ -302,15 +272,19 @@ export class StreamingService {
       this.streamConfig = config;
       this.currentCameraId = cameraId;
       this.streamResourcesStarted = true;
-      await CameraService.startCapture(cameraId, this.width, this.height, config.fps);
+      // The camera may negotiate a different size than requested (e.g. 4K not
+      // supported on the selected lens) — encode what it actually delivers.
+      const capture = await CameraService.startCapture(cameraId, this.width, this.height, config.fps);
+      const outWidth = capture && capture.width > 0 ? capture.width : this.width;
+      const outHeight = capture && capture.height > 0 ? capture.height : this.height;
       await AudioService.startRecording();
-      await EncoderService.initEncoder(this.width, this.height, config.bitrate, config.fps);
+      await EncoderService.initEncoder(outWidth, outHeight, config.bitrate, config.fps);
       await WebRTCService.createPeerConnection(this.iceServers);
       await WebRTCService.addVideoTrack('ojowacam-video');
       await WebRTCService.addAudioTrack('ojowacam-audio');
       await WebRTCService.createOffer();
       const videoConfig: VideoConfig = {
-        resolution: config.resolution, fps: config.fps, codec: config.codec, bitrate: config.bitrate,
+        resolution: `${outWidth}x${outHeight}`, fps: config.fps, codec: config.codec, bitrate: config.bitrate,
       };
       const audioConfig: AudioConfig = { codec: 'OPUS', sampleRate: 48000, channels: 2 };
       const sessionId = `${deviceIdentity.getDeviceId()}-${Date.now()}`;
@@ -359,7 +333,6 @@ export class StreamingService {
       case 'ICE_CANDIDATE': await WebRTCService.addIceCandidate(message.candidate); break;
       case 'PAIRING_RESPONSE':
         this.state.isAuthenticated = authService.isAuthenticated();
-        this.state.isPaired = authService.isPaired();
         this.notifyStateChange();
         break;
       case 'START_SESSION': console.log('Desktop acknowledged session:', message.sessionId); break;
@@ -381,7 +354,6 @@ export class StreamingService {
   private notifyStateChange(): void {
     this.state.isConnected = signalingService.isConnected();
     this.state.isAuthenticated = authService.isAuthenticated();
-    this.state.isPaired = authService.isPaired();
     this.state.sessionTTL = authService.getSessionTTL();
     this.onStateChange?.(this.getState());
   }

@@ -231,6 +231,10 @@ export class SignalingServer {
   isConnected(): boolean {
     return this.state.connected;
   }
+  /** True once a peer completed the WebSocket handshake. */
+  hasPeer(): boolean {
+    return this.isReady();
+  }
   isListening(): boolean {
     return this.listening;
   }

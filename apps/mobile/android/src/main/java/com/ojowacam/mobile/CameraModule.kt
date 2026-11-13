@@ -73,14 +73,19 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             stopCaptureInternal()
             currentCameraId = cameraId
             isStreaming = true
-            frameWidth = width
-            frameHeight = height
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-            imageReader = ImageReader.newInstance(width, height, android.graphics.ImageFormat.YUV_420_888, 5)
+            // Negotiate with the sensor: 4K (and other sizes) may be unsupported
+            // on some lenses (front-facing often caps at 1080p).
+            val outputMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val sizes = outputMap?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888) ?: emptyArray()
+            val chosen = chooseOutputSize(sizes, width, height)
+            frameWidth = chosen.width
+            frameHeight = chosen.height
+            imageReader = ImageReader.newInstance(chosen.width, chosen.height, android.graphics.ImageFormat.YUV_420_888, 5)
             val stateCallback = object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     cameraDevice = device
-                    createCaptureSession(device, width, height, fps)
+                    createCaptureSession(device, chosen.width, chosen.height, fps)
                 }
                 override fun onDisconnected(device: CameraDevice) {
                     device.close(); cameraDevice = null; isStreaming = false
@@ -92,7 +97,11 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             }
             val handler = android.os.Handler(android.os.HandlerThread("CameraOpenThread").apply { start() }.looper)
             cameraManager.openCamera(cameraId, stateCallback, handler)
-            promise.resolve(true)
+            val result = Arguments.createMap().apply {
+                putInt("width", chosen.width)
+                putInt("height", chosen.height)
+            }
+            promise.resolve(result)
         } catch (e: SecurityException) {
             isStreaming = false
             promise.reject("E_CAMERA_PERMISSION", "Camera permission not granted", e)
@@ -100,6 +109,26 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             isStreaming = false
             promise.reject("CAPTURE_ERROR", e.message, e)
         }
+    }
+
+    /**
+     * Pick the best supported output size for the requested dimensions:
+     * exact match first, then the largest size with the same aspect ratio
+     * that does not upscale, then any no-upscale size, then the closest.
+     */
+    private fun chooseOutputSize(sizes: Array<android.util.Size>, reqW: Int, reqH: Int): android.util.Size {
+        if (sizes.isEmpty()) return android.util.Size(reqW, reqH)
+        sizes.firstOrNull { it.width == reqW && it.height == reqH }?.let { return it }
+        val reqAspect = reqW.toFloat() / reqH.toFloat()
+        fun aspect(size: android.util.Size): Float = size.width.toFloat() / size.height.toFloat()
+        val sameAspect = sizes.filter { kotlin.math.abs(aspect(it) - reqAspect) < 0.05f }
+        val pool = if (sameAspect.isNotEmpty()) sameAspect else sizes.toList()
+        val reqArea = reqW.toLong() * reqH
+        val noUpscale = pool.filter { it.width.toLong() * it.height <= reqArea }
+        if (noUpscale.isNotEmpty()) {
+            return noUpscale.maxByOrNull { it.width.toLong() * it.height }!!
+        }
+        return pool.minByOrNull { it.width.toLong() * it.height }!!
     }
     private fun createCaptureSession(device: CameraDevice, width: Int, height: Int, fps: Int) {
         try {

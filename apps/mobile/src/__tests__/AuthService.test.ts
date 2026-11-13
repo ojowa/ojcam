@@ -5,7 +5,6 @@
 
 import { authService } from '../services/security/AuthService';
 import { deviceIdentity } from '../services/security/DeviceIdentity';
-import { pairingService } from '../services/security/PairingService';
 import { setStorageAdapter } from '../services/security/DeviceIdentity';
 
 const mockStorage = new Map<string, string>();
@@ -24,7 +23,6 @@ beforeEach(() => {
     }),
   });
   (authService as any).session = null;
-  (pairingService as any).pendingPairings.clear();
 });
 
 describe('AuthService', () => {

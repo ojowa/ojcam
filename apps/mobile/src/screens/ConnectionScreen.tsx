@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch, Alert, TextInput } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { USBService } from '../services/usb/USBService';
 import { streamingService } from '../services/StreamingService';
@@ -15,22 +15,15 @@ export default function ConnectionScreen() {
   const [peerConnected, setPeerConnected] = React.useState(false);
   const [localIp, setLocalIp] = React.useState('');
   const [signalingUrl, setSignalingUrl] = React.useState('');
-  const [pairingCode, setPairingCode] = React.useState<string | null>(null);
-  const [pairingBusy, setPairingBusy] = React.useState(false);
-  const [showCodeEntry, setShowCodeEntry] = React.useState(false);
-  const [manualCode, setManualCode] = React.useState('');
-  const [isPaired, setIsPaired] = React.useState(false);
   const [connectionError, setConnectionError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
     const applyState = (state: ReturnType<typeof streamingService.getState>) => {
       if (cancelled) return;
-      setPairingCode(state.pairingCode);
-      setIsPaired(state.isPaired);
       setPeerConnected(state.isConnected);
       if (state.isConnected) setConnectionError(null);
-      else if (state.error && !state.pairingCode) setConnectionError(state.error);
+      else if (state.error) setConnectionError(state.error);
     };
     streamingService.setOnStateChange(applyState);
     applyState(streamingService.getState());
@@ -110,52 +103,6 @@ export default function ConnectionScreen() {
     setServerRunning(false);
     setPeerConnected(false);
     setConnectionError(null);
-  };
-
-  const handleShowPairing = async () => {
-    if (pairingBusy) return;
-    if (!serverRunning) {
-      Alert.alert('Server Not Started', 'Start the signaling server first.');
-      return;
-    }
-    setPairingBusy(true);
-    try {
-      await streamingService.initialize();
-      const code = await streamingService.requestPairing();
-      Alert.alert(
-        'Pairing Code',
-        `Share this code with your desktop:\n\n${code}\n\nOr scan the QR payload from the desktop app once connected.`,
-      );
-    } catch (error) {
-      Alert.alert('Pairing Failed', error instanceof Error ? error.message : 'Unable to start pairing.');
-    } finally {
-      setPairingBusy(false);
-    }
-  };
-
-  const handleSubmitManualCode = async () => {
-    if (pairingBusy) return;
-    const code = manualCode.trim();
-    if (!code) {
-      Alert.alert('Missing Code', 'Enter the pairing code shown on your desktop.');
-      return;
-    }
-    if (!serverRunning) {
-      Alert.alert('Server Not Started', 'Start the signaling server first.');
-      return;
-    }
-    setPairingBusy(true);
-    try {
-      await streamingService.initialize();
-      await streamingService.submitPairingCode(code);
-      Alert.alert('Code Submitted', 'Waiting for the desktop to confirm pairing...');
-      setShowCodeEntry(false);
-      setManualCode('');
-    } catch (error) {
-      Alert.alert('Pairing Failed', error instanceof Error ? error.message : 'Unable to submit pairing code.');
-    } finally {
-      setPairingBusy(false);
-    }
   };
 
   React.useEffect(() => {
@@ -275,56 +222,6 @@ export default function ConnectionScreen() {
         </>
       )}
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Pairing</Text>
-        {isPaired ? (
-          <View style={styles.pairedBanner}>
-            <Text style={styles.pairedText}>Paired with desktop</Text>
-          </View>
-        ) : null}
-        {pairingCode ? (
-          <View style={styles.codeDisplay}>
-            <Text style={styles.codeLabel}>Current code</Text>
-            <Text style={styles.codeValue}>{pairingCode}</Text>
-            <Text style={styles.codeHint}>Enter this code on the desktop, or scan the QR payload there.</Text>
-          </View>
-        ) : null}
-        <TouchableOpacity
-          style={[styles.button, pairingBusy && styles.buttonDisabled]}
-          onPress={handleShowPairing}
-          disabled={pairingBusy}
-        >
-          <Text style={styles.buttonText}>{pairingBusy ? 'Starting…' : 'Show Pairing Code'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.buttonOutline}
-          onPress={() => setShowCodeEntry((v) => !v)}
-        >
-          <Text style={styles.buttonText}>{showCodeEntry ? 'Hide Code Entry' : 'Enter Pairing Code'}</Text>
-        </TouchableOpacity>
-        {showCodeEntry ? (
-          <View style={styles.codeEntry}>
-            <TextInput
-              style={styles.codeInput}
-              value={manualCode}
-              onChangeText={setManualCode}
-              placeholder="6-digit code from desktop"
-              placeholderTextColor="#999"
-              keyboardType="number-pad"
-              maxLength={6}
-              autoFocus
-            />
-            <TouchableOpacity
-              style={[styles.button, pairingBusy && styles.buttonDisabled]}
-              onPress={handleSubmitManualCode}
-              disabled={pairingBusy}
-            >
-              <Text style={styles.buttonText}>Submit Code</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-      </View>
-
       <StatusBar style="auto" />
     </ScrollView>
   );
@@ -411,13 +308,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: 'center',
   },
-  buttonOutline: {
-    borderWidth: 1,
-    borderColor: '#007AFF',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-  },
   disconnectButton: {
     backgroundColor: '#FF3B30',
   },
@@ -450,58 +340,6 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
-  },
-  pairedBanner: {
-    backgroundColor: '#e8f8ee',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  pairedText: {
-    color: '#1a7f37',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  codeDisplay: {
-    backgroundColor: '#f0f7ff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  codeLabel: {
-    color: '#666',
-    fontSize: 13,
-    marginBottom: 4,
-  },
-  codeValue: {
-    color: '#007AFF',
-    fontSize: 32,
-    fontWeight: '700',
-    letterSpacing: 6,
-    marginBottom: 6,
-  },
-  codeHint: {
-    color: '#666',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  codeEntry: {
-    marginTop: 4,
-    gap: 8,
-  },
-  codeInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 20,
-    letterSpacing: 4,
-    textAlign: 'center',
-    color: '#1a1a1a',
-    backgroundColor: '#f9f9f9',
   },
   fieldLabel: {
     color: '#666',

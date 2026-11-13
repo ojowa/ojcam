@@ -1,6 +1,5 @@
 import { SignalingServer, defaultTransportConfig, type TransportState } from './SignalingServer';
 import { authService } from '../security/AuthService';
-import { pairingService, type PairingQRPayload } from '../security/PairingService';
 import { deviceIdentity } from '../security/DeviceIdentity';
 import { encodeMessage, decodeMessageBase64 } from '../protocol/ProtobufCodec';
 import type { ProtocolMessage } from '../protocol/messageTypes';
@@ -16,7 +15,6 @@ export interface SignalingMessage {
 export interface SignalingEventHandlers {
   onConnected?: () => void; onDisconnected?: () => void; onReconnecting?: (attempt: number) => void;
   onMessage?: (message: SignalingMessage) => void;
-  onPairingCodeGenerated?: (code: { code: string; expiresAt: number; ttlSeconds: number }) => void;
   onPairingCompleted?: (success: boolean, sessionToken?: string, error?: string) => void;
   onError?: (error: Error) => void;
 }
@@ -40,11 +38,11 @@ export class SignalingService {
     this.transport.setOnMessage(data => { void this.handleIncomingMessage(data); });
     this.transport.setOnStateChange(state => this.handleStateChange(state));
     this.transport.setOnError(err => this.handlers.onError?.(err));
+    // Sessions are short-lived; re-handshake automatically whenever one expires.
+    authService.setOnSessionExpired(() => { void this.requestPairing(); });
   }
   setHandlers(handlers: SignalingEventHandlers): void {
     this.handlers = handlers;
-    pairingService.setOnPairingCodeGenerated(code => this.handlers.onPairingCodeGenerated?.(code));
-    pairingService.setOnPairingCompleted(result => this.handlers.onPairingCompleted?.(result.success, result.sessionToken, result.errorMessage));
   }
   async initialize(): Promise<void> {
     if (this.isInitializing) return;
@@ -81,18 +79,12 @@ export class SignalingService {
     let binary = ''; for (const byte of data) binary += String.fromCharCode(byte);
     await this.sendAuthenticated({ type: 'DEVICE_ANNOUNCEMENT', deviceId: announcement.deviceId, payload: btoa(binary) });
   }
-  async requestPairing(): Promise<{ code: string; qrPayload: PairingQRPayload }> {
-    const result = await pairingService.generatePairingCode(this.config.deviceName);
-    this.sendPairingRequest({ type: 'PAIRING_REQUEST', deviceId: deviceIdentity.getDeviceId(), pairingCode: result.code.code, qrPayload: result.qrPayload });
-    return { code: result.code.code, qrPayload: result.qrPayload };
-  }
-  async submitPairingCode(pairingCode: string): Promise<void> {
-    pairingService.adoptPairingCode(pairingCode);
-    this.sendPairingRequest({
-      type: 'PAIRING_REQUEST',
-      deviceId: deviceIdentity.getDeviceId(),
-      pairingCode,
-    });
+  /**
+   * Ask the connected peer for a session. The OBS plugin auto-accepts and
+   * replies with a sessionToken — no pairing code involved.
+   */
+  async requestPairing(): Promise<void> {
+    this.sendPairingRequest({ type: 'PAIRING_REQUEST', deviceId: deviceIdentity.getDeviceId() });
   }
   disconnect(): void {
     this.stopPairingRetry();
@@ -106,7 +98,7 @@ export class SignalingService {
     this.transport.send(JSON.stringify(payload));
     this.stopPairingRetry();
     this.pairingRetryTimer = setInterval(() => {
-      if (this.transport.isConnected() && this.lastPairingRequest) {
+      if (this.transport.isConnected() && this.transport.hasPeer() && this.lastPairingRequest) {
         this.transport.send(JSON.stringify(this.lastPairingRequest));
       }
     }, 5000);
@@ -127,16 +119,14 @@ export class SignalingService {
     if (message.type === 'PING') { this.transport.send(JSON.stringify({ type: 'PONG' })); return; }
     if (message.type === 'PONG') return;
     if (message.type === 'PAIRING_RESPONSE') {
-      const result = await pairingService.handlePairingResponse({
-        deviceId: message.deviceId || '', pairingCode: message.pairingCode || '', sessionToken: message.sessionToken,
-        success: message.success === true, errorMessage: message.errorMessage,
-      });
-      if (result.success && result.sessionToken) {
-        await authService.establishSession(result.sessionToken);
+      if (message.success && message.sessionToken) {
+        await authService.establishSession(message.sessionToken);
         this.stopPairingRetry();
         this.lastPairingRequest = null;
+        this.handlers.onPairingCompleted?.(true, message.sessionToken);
+      } else {
+        this.handlers.onPairingCompleted?.(false, undefined, message.errorMessage);
       }
-      this.handlers.onPairingCompleted?.(result.success, result.sessionToken, result.errorMessage);
       return;
     }
     if (message.type === 'PAIRING_ERROR') {
@@ -144,6 +134,8 @@ export class SignalingService {
       return;
     }
     if (message.type === 'ERROR') {
+      // The peer lost our session (e.g. OBS restarted) — re-handshake.
+      void this.requestPairing();
       this.handlers.onError?.(new Error(message.errorMessage || 'Signaling error'));
       return;
     }
@@ -156,7 +148,12 @@ export class SignalingService {
   }
   private handleStateChange(state: TransportState): void {
     if (state.connected) {
-      if (state.attemptCount === 0) { this.handlers.onConnected?.(); void this.sendDeviceAnnouncement().catch(() => undefined); }
+      if (state.attemptCount === 0) {
+        this.handlers.onConnected?.();
+        void this.sendDeviceAnnouncement().catch(() => undefined);
+        // Seamless: establish a session with every peer that connects.
+        void this.requestPairing();
+      }
     } else if (state.reconnecting) this.handlers.onReconnecting?.(state.attemptCount);
     else this.handlers.onDisconnected?.();
   }
