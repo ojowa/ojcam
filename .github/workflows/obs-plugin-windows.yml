@@ -47,43 +47,58 @@ jobs:
       - name: Resolve Direct3D compiler library
         shell: pwsh
         run: |
-          $sdkLibRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib'
-          $candidates = @()
-          if (Test-Path $sdkLibRoot) {
-            $candidates = @(
-              Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler_47.lib -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler_47\.lib$' } |
-                Sort-Object { try { [version]$_.Directory.Parent.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
-                Select-Object -First 1
-              Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler.lib -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler\.lib$' } |
-                Sort-Object { try { [version]$_.Directory.Parent.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
-                Select-Object -First 1
-            ) | Where-Object { $_ }
-          }
+          $outDir = Join-Path $env:GITHUB_WORKSPACE 'ci-libs'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $generatedLib = Join-Path $outDir 'd3dcompiler_47.lib'
+          $patchTarget = $null
 
-          if (-not $candidates) {
-            Write-Host "No Windows SDK d3dcompiler lib found to patch; relying on the Visual Studio toolset default library path."
-            exit 0
-          }
-
-          $d3dCompiler = $null
-          foreach ($candidate in $candidates) {
-            if (Get-Command dumpbin -ErrorAction SilentlyContinue) {
-              $symbols = & dumpbin /symbols $candidate.FullName 2>$null | Select-String -Pattern 'D3DCompile|D3DCreateBlob'
-              if (-not $symbols) {
-                Write-Host "Skipping $($candidate.FullName): missing D3DCompile/D3DCreateBlob symbols"
-                continue
-              }
-            } else {
-              Write-Host "dumpbin not on PATH; trusting SDK layout for $($candidate.FullName)"
+          # Preferred: build a minimal import lib from the system d3dcompiler_47.dll
+          # (guaranteed to export D3DCompile/D3DCreateBlob; path has no spaces).
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $libExe = $null
+          if (Test-Path $vswhere) {
+            $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
+            if ($vsPath) {
+              $libExe = Get-ChildItem -Path (Join-Path $vsPath 'VC\Tools\MSVC') -Directory -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending |
+                ForEach-Object { Join-Path $_.FullName 'bin\Hostx64\x64\lib.exe' } |
+                Where-Object { Test-Path $_ } | Select-Object -First 1
             }
-            $d3dCompiler = $candidate
-            break
+          }
+          $defFile = Join-Path $outDir 'd3dcompiler_47.def'
+          @('LIBRARY d3dcompiler_47', 'EXPORTS', '    D3DCompile', '    D3DCreateBlob') | Set-Content -Path $defFile -Encoding ascii
+          if ($libExe) {
+            & $libExe /nologo /def:$defFile /machine:x64 /out:$generatedLib
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $generatedLib)) {
+              $patchTarget = $generatedLib
+              Write-Host "Generated import lib via lib.exe: $generatedLib"
+            } else {
+              Write-Host "lib.exe failed (exit $LASTEXITCODE); falling back to SDK search"
+            }
+          } else {
+            Write-Host "lib.exe not found via vswhere; falling back to SDK search"
           }
 
-          if (-not $d3dCompiler) {
-            Write-Host "No verifiable d3dcompiler lib; relying on the Visual Studio toolset default library path."
+          if (-not $patchTarget) {
+            $sdkLibRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib'
+            $candidates = @()
+            if (Test-Path $sdkLibRoot) {
+              $candidates = @(
+                Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler_47.lib -Recurse -File -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler_47\.lib$' } |
+                  Sort-Object { try { [version]$_.Directory.Parent.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
+                  Select-Object -First 1
+                Get-ChildItem -Path $sdkLibRoot -Filter d3dcompiler.lib -Recurse -File -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -match '\\um\\x64\\d3dcompiler\.lib$' } |
+                  Sort-Object { try { [version]$_.Directory.Parent.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
+                  Select-Object -First 1
+              ) | Where-Object { $_ }
+            }
+            if ($candidates) { $patchTarget = $candidates[0].FullName }
+          }
+
+          if (-not $patchTarget) {
+            Write-Host "No d3dcompiler lib available to patch; relying on the Visual Studio toolset default library path."
             exit 0
           }
 
@@ -93,17 +108,23 @@ jobs:
           if (-not $contents.Contains($original)) {
             throw "Could not find the expected Direct3D renderer link declaration in $cmakeFile"
           }
-          $libraryPath = $d3dCompiler.FullName.Replace('\', '/')
+          $libraryPath = $patchTarget.Replace('\', '/')
           $replacement = 'target_link_libraries(libobs-d3d11 PRIVATE OBS::libobs d3d9 d3d11 "' + $libraryPath + '" dxgi shcore)'
           $contents = $contents.Replace($original, $replacement)
           Set-Content -Path $cmakeFile -Value $contents -NoNewline
-          Write-Host "Using Direct3D compiler library: $($d3dCompiler.FullName)"
+          Write-Host "Using Direct3D compiler library: $patchTarget"
+          Select-String -Path $cmakeFile -Pattern 'target_link_libraries\(libobs-d3d11' | ForEach-Object { Write-Host "Patched: $($_.Line.Trim())" }
 
       - name: Configure OBS Studio (Windows)
         shell: pwsh
         run: |
           cmake -S obs-studio -B obs-studio/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_STREAMFX=OFF -DENABLE_SPEECH_TO_TEXT=OFF -DENABLE_VST=OFF -DENABLE_WEBRTC=OFF
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $vcx = Get-ChildItem obs-studio/build/libobs-d3d11 -Filter *.vcxproj -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($vcx) {
+            Write-Host "=== d3dcompiler references in $($vcx.Name) ==="
+            Select-String -Path $vcx.FullName -Pattern 'd3dcompiler' | ForEach-Object { Write-Host $_.Line.Trim() }
+          }
           Write-Host "OBS configure complete"
 
       - name: Build OBS runtime libraries (Windows)
