@@ -120,7 +120,7 @@ jobs:
         run: |
           cmake -S obs-studio -B obs-studio/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_STREAMFX=OFF -DENABLE_SPEECH_TO_TEXT=OFF -DENABLE_VST=OFF -DENABLE_WEBRTC=OFF
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $vcx = Get-ChildItem obs-studio/build/libobs-d3d11 -Filter *.vcxproj -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          $vcx = Get-ChildItem obs-studio/build/libobs-d3d11 -Filter 'libobs-d3d11.vcxproj' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($vcx) {
             Write-Host "=== d3dcompiler references in $($vcx.Name) ==="
             Select-String -Path $vcx.FullName -Pattern 'd3dcompiler' | ForEach-Object { Write-Host $_.Line.Trim() }
@@ -130,7 +130,7 @@ jobs:
       - name: Build OBS runtime libraries (Windows)
         shell: pwsh
         run: |
-          cmake --build obs-studio/build --config Release --target libobs-opengl libobs-d3d11 -j 4
+          cmake --build obs-studio/build --config Release --target libobs libobs-opengl -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS runtime libraries build complete"
 
