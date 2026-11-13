@@ -102,18 +102,26 @@ jobs:
             exit 0
           }
 
-          $cmakeFile = 'obs-studio/libobs-d3d11/CMakeLists.txt'
-          $contents = Get-Content -Raw $cmakeFile
-          $original = 'target_link_libraries(libobs-d3d11 PRIVATE OBS::libobs d3d9 d3d11 d3dcompiler dxgi shcore)'
-          if (-not $contents.Contains($original)) {
-            throw "Could not find the expected Direct3D renderer link declaration in $cmakeFile"
-          }
           $libraryPath = $patchTarget.Replace('\', '/')
           $replacement = 'target_link_libraries(libobs-d3d11 PRIVATE OBS::libobs d3d9 d3d11 "' + $libraryPath + '" dxgi shcore)'
-          $contents = $contents.Replace($original, $replacement)
-          Set-Content -Path $cmakeFile -Value $contents -NoNewline
+          $patchJobs = @(
+            @{ File = 'obs-studio/libobs-d3d11/cmake/legacy.cmake'; Original = 'target_link_libraries(libobs-d3d11 PRIVATE OBS::libobs d3d9 d3d11 dxgi shcore)'; Required = $true },
+            @{ File = 'obs-studio/libobs-d3d11/CMakeLists.txt'; Original = 'target_link_libraries(libobs-d3d11 PRIVATE OBS::libobs d3d9 d3d11 d3dcompiler dxgi shcore)'; Required = $false }
+          )
+          foreach ($job in $patchJobs) {
+            if (-not (Test-Path $job.File)) { Write-Host "Missing $($job.File); skipping"; continue }
+            $contents = Get-Content -Raw $job.File
+            if (-not $contents.Contains($job.Original)) {
+              if ($job.Required) { throw "Expected link line not found in $($job.File)" }
+              Write-Host "Link line not found in $($job.File); skipping"
+              continue
+            }
+            $contents = $contents.Replace($job.Original, $replacement)
+            Set-Content -Path $job.File -Value $contents -NoNewline
+            Write-Host "Patched $($job.File)"
+            Select-String -Path $job.File -Pattern 'target_link_libraries\(libobs-d3d11' | ForEach-Object { Write-Host "  $($_.Line.Trim())" }
+          }
           Write-Host "Using Direct3D compiler library: $patchTarget"
-          Select-String -Path $cmakeFile -Pattern 'target_link_libraries\(libobs-d3d11' | ForEach-Object { Write-Host "Patched: $($_.Line.Trim())" }
 
       - name: Configure OBS Studio (Windows)
         shell: pwsh
@@ -130,7 +138,7 @@ jobs:
       - name: Build OBS runtime libraries (Windows)
         shell: pwsh
         run: |
-          cmake --build obs-studio/build --config Release --target libobs libobs-opengl -j 4
+          cmake --build obs-studio/build --config Release --target libobs libobs-opengl libobs-d3d11 -j 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "OBS runtime libraries build complete"
 
