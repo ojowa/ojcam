@@ -36,7 +36,7 @@ jobs:
           dotnet build apps/desktop-windows/Ojowacam.Desktop.csproj -c Release
       - name: Publish Windows application (self-contained .exe)
         run: |
-          dotnet publish apps/desktop-windows/Ojowacam.Desktop.csproj -c Release -o ./publish -r win-x64 --self-contained
+          dotnet publish apps/desktop-windows/Ojowacam.Desktop.csproj -c Release -o ./publish-desktop -r win-x64 --self-contained
       - name: Publish Windows application (single-file portable exe)
         run: |
           dotnet publish apps/desktop-windows/Ojowacam.Desktop.csproj -c Release -o ./publish-single -r win-x64 --self-contained -p:PublishSingleFile=true
@@ -44,15 +44,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-windows-publish
-          path: publish/
+          path: publish-desktop/
       - name: Build Windows MSI installer
         shell: pwsh
         run: |
           $installerDir = 'apps/obs-plugin-windows/installers'
           $workDir = Join-Path $env:RUNNER_TEMP 'desktop-msi'
           New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'publish'
-          heat.exe dir publish -cg DesktopPublishFiles -dr INSTALLFOLDER -srd -scom -sreg -ag -t "$installerDir/desktop-publish-x64.xsl" -var var.PublishDir -out "$workDir/desktop-publish-files.wxs"
+          # Harvest the clean publish-desktop output only — repo-root publish/
+          # also holds the previously tracked installers, which must not be
+          # packaged into the new MSI.
+          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'publish-desktop'
+          heat.exe dir publish-desktop -cg DesktopPublishFiles -dr INSTALLFOLDER -srd -scom -sreg -ag -t "$installerDir/desktop-publish-x64.xsl" -var var.PublishDir -out "$workDir/desktop-publish-files.wxs"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           candle.exe "-dPublishDir=$publishDir" -ext WixUIExtension -out "$workDir/ojowacam-desktop.wixobj" "$installerDir/ojowacam-desktop.wxs"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
