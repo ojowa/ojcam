@@ -28,6 +28,12 @@ obs_source_info ojowacam_video_source_info = [] {
     info.video_render = ojowacam_video_render;
     info.update = ojowacam_video_update;
     info.get_properties = ojowacam_video_properties;
+    info.get_defaults = [](obs_data_t *settings) {
+        // Applies when the key is absent, so existing scenes gain
+        // same-network auto-discovery without losing their stored URL.
+        obs_data_set_default_bool(settings, "auto_discover", true);
+        obs_data_set_default_string(settings, "signaling_url", "");
+    };
     return info;
 }();
 
@@ -41,13 +47,14 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
 
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
+    const bool auto_discover = obs_data_get_bool(settings, "auto_discover");
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
 
-    if (!resolved_signaling_url.empty()) {
+    if (!resolved_signaling_url.empty() || auto_discover) {
         data->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url);
+            resolved_device_id, resolved_signaling_url, auto_discover);
         if (data->stream_receiver) {
             data->stream_receiver->setVideoSource(source);
             data->stream_receiver->onVideoSizeChanged = [data](uint32_t w, uint32_t h) {
@@ -101,6 +108,7 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
 
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
+    const bool auto_discover = obs_data_get_bool(settings, "auto_discover");
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
@@ -112,9 +120,9 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
     }
     d->connected = false;
 
-    if (!resolved_signaling_url.empty()) {
+    if (!resolved_signaling_url.empty() || auto_discover) {
         d->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url);
+            resolved_device_id, resolved_signaling_url, auto_discover);
         if (d->stream_receiver) {
             d->stream_receiver->setVideoSource(d->source);
             d->stream_receiver->onVideoSizeChanged = [d](uint32_t w, uint32_t h) {
@@ -152,7 +160,9 @@ obs_properties_t *ojowacam_video_properties(void *data)
             return true;
         });
 
-    obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://phone-ip:8765)", OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, "signaling_url", "Signaling URL (optional with auto-discovery)", OBS_TEXT_DEFAULT);
+    obs_properties_add_bool(props, "auto_discover",
+                            "Auto-discover the phone on this network (any IP)");
     obs_properties_add_button(props, "connect", "Connect to Device", [](obs_properties_t*, obs_property_t*, void* data) {
         auto *d = static_cast<OjowacamVideoData*>(data);
         obs_data_t *settings = obs_source_get_settings(d->source);

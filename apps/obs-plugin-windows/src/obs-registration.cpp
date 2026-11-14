@@ -19,8 +19,10 @@ bool obs_module_load(void)
     // Register Ojowacam audio source
     obs_register_source(&ojowacam_audio_source_info);
 
-    // Initialize device manager
+    // Initialize device manager and start same-network discovery (UDP
+    // beacons + mDNS where available) so sources can auto-connect.
     ojowacam::DeviceManager::GetInstance()->Initialize();
+    ojowacam::DeviceManager::GetInstance()->StartDiscovery();
 
     return true;
 }

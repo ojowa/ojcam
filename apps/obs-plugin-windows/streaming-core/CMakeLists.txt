@@ -100,6 +100,11 @@ FetchContent_MakeAvailable(libdatachannel)
 
 target_link_libraries(streaming-core PRIVATE datachannel-static)
 target_compile_definitions(streaming-core PRIVATE OJO_LIBDATACHANNEL)
+# webrtc-transport.cpp implements the WS handshake with mbedtls SHA-1/base64
+# directly; datachannel-static consumes MbedTLS privately, so the headers and
+# mbedcrypto symbols must be wired in here explicitly.
+target_include_directories(streaming-core PRIVATE "${mbedtls_SOURCE_DIR}/include")
+target_link_libraries(streaming-core PRIVATE mbedcrypto)
 message(STATUS "[Ojowacam] libdatachannel built from source (MbedTLS crypto) - WebRTC transport enabled")
 
 # Native WebRTC framework when available (macOS path); absent on Windows, where

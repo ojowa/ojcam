@@ -14,6 +14,14 @@ public:
     WebRTCTransport();
     ~WebRTCTransport() override;
 
+    // Options applied before connect():
+    //  - auto_discover: dial the phone when a same-network beacon (or an
+    //    inbound connection from the phone) provides its address, instead of
+    //    failing on a stale/missing manual URL.
+    // The plugin's own WebSocket server (kPluginWsPort) always starts with
+    // connect() so the phone can dial in regardless of these options.
+    void setConnectionOptions(bool auto_discover);
+
     bool connect(const std::string& url) override;
     void disconnect() override;
     bool sendVideoFrame(const VideoFrame& frame) override;
@@ -24,6 +32,13 @@ public:
     void addIceCandidate(const std::string& candidate);
 
 private:
+    // Accepts one inbound WebSocket connection from the phone onto the
+    // signaling client (the plugin prefers its own outbound connection; an
+    // active session rejects additional peers). The socket arrives as
+    // uintptr_t because SOCKET is pointer-sized on 64-bit Windows.
+    void onInboundSignaling(uintptr_t socket_handle);
+    // Marks the signaling session live and notifies observers.
+    void markSessionActive(const char* how);
     void handleSignalingMessage(const std::string& message);
     void handlePairingRequest(const std::string& message);
     bool sessionAuthorized(const std::string& message);
@@ -46,6 +61,10 @@ private:
 
     struct Impl;
     Impl* impl_;
+    // Infrastructure that must outlive individual sessions: the plugin's
+    // WebSocket server and its connection-mode options.
+    struct Host;
+    std::unique_ptr<Host> host_;
     bool connected_ = false;
 };
 

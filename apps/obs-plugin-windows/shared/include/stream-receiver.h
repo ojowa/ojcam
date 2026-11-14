@@ -18,7 +18,11 @@ public:
     StreamReceiver(obs_source_t* video_source, obs_source_t* audio_source);
     ~StreamReceiver();
 
-    bool connect(const std::string& device_id, const std::string& signaling_url);
+    // auto_discover: keep a same-network discovery listener (UDP beacons +
+    // the plugin's own WebSocket server) so the session forms whenever the
+    // phone appears, at any IP, even with an empty or stale signaling_url.
+    bool connect(const std::string& device_id, const std::string& signaling_url,
+                 bool auto_discover = false);
     void disconnect();
 
     // Fires (from the decode thread) whenever the incoming video size changes

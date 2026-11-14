@@ -11,6 +11,7 @@
 
 import { sha1 } from 'js-sha1';
 import { utf8Decode, utf8Encode } from '../../utils/utf8';
+import { beaconDiscovery } from '../discovery/BeaconDiscovery';
 export { utf8Decode, utf8Encode };
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -71,6 +72,31 @@ export interface WsFrame {
   payload: Uint8Array;
 }
 
+function encodeFrameBytes(data: Uint8Array, opcode: number, masked: boolean): Uint8Array {
+  const len = data.length;
+  const mask = masked ? [Math.floor(Math.random() * 256), Math.floor(Math.random() * 256), Math.floor(Math.random() * 256), Math.floor(Math.random() * 256)] : null;
+  let header: number[];
+  const lenByte = masked ? 0x80 : 0;
+  if (len <= 125) {
+    header = [0x80 | opcode, lenByte | len];
+  } else if (len <= 0xffff) {
+    header = [0x80 | opcode, lenByte | 126, (len >> 8) & 0xff, len & 0xff];
+  } else {
+    header = [0x80 | opcode, lenByte | 127, 0, 0, 0, 0, (len >>> 24) & 0xff, (len >>> 16) & 0xff, (len >>> 8) & 0xff, len & 0xff];
+  }
+  const out = new Uint8Array(header.length + (mask ? 4 : 0) + len);
+  out.set(header, 0);
+  if (mask) {
+    out.set(mask, header.length);
+    for (let i = 0; i < len; i++) {
+      out[header.length + 4 + i] = data[i] ^ mask[i % 4];
+    }
+  } else {
+    out.set(data, header.length);
+  }
+  return out;
+}
+
 /** Server→client frame. Servers must NOT mask. */
 export function encodeServerFrame(payload: string, opcode = 0x1): Uint8Array {
   return encodeServerFrameBytes(utf8Encode(payload), opcode);
@@ -78,19 +104,47 @@ export function encodeServerFrame(payload: string, opcode = 0x1): Uint8Array {
 
 /** Server→client frame for raw binary payloads (e.g. opcode 0x2 PCM audio). */
 export function encodeServerFrameBytes(data: Uint8Array, opcode = 0x2): Uint8Array {
-  const len = data.length;
-  let header: number[];
-  if (len <= 125) {
-    header = [0x80 | opcode, len];
-  } else if (len <= 0xffff) {
-    header = [0x80 | opcode, 126, (len >> 8) & 0xff, len & 0xff];
-  } else {
-    header = [0x80 | opcode, 127, 0, 0, 0, 0, (len >>> 24) & 0xff, (len >>> 16) & 0xff, (len >>> 8) & 0xff, len & 0xff];
-  }
-  const out = new Uint8Array(header.length + len);
-  out.set(header, 0);
-  out.set(data, header.length);
-  return out;
+  return encodeFrameBytes(data, opcode, false);
+}
+
+/** Client→server frame. Clients MUST mask (RFC 6455 §5.3). */
+export function encodeClientFrame(payload: string, opcode = 0x1): Uint8Array {
+  return encodeClientFrameBytes(utf8Encode(payload), opcode);
+}
+
+/** Client→server frame for raw binary payloads (phone dial-out mode). */
+export function encodeClientFrameBytes(data: Uint8Array, opcode = 0x2): Uint8Array {
+  return encodeFrameBytes(data, opcode, true);
+}
+
+// ---------------------------------------------------------------------------
+// Client handshake (phone dial-out to the plugin's WebSocket server)
+// ---------------------------------------------------------------------------
+
+/** Build a client opening handshake. Returns the request and its key. */
+export function buildHandshakeRequest(host: string, key?: string): { request: string; key: string } {
+  const wsKey = key ?? generateWsKey();
+  const request =
+    'GET / HTTP/1.1\r\n' +
+    `Host: ${host}\r\n` +
+    'Upgrade: websocket\r\n' +
+    'Connection: Upgrade\r\n' +
+    `Sec-WebSocket-Key: ${wsKey}\r\n` +
+    'Sec-WebSocket-Version: 13\r\n\r\n';
+  return { request, key: wsKey };
+}
+
+/** Validate the server's Sec-WebSocket-Accept against the key we sent. */
+export function verifyHandshakeAccept(headerText: string, key: string): boolean {
+  const match = /sec-websocket-accept:\s*([^\s\r\n]+)/i.exec(headerText);
+  if (!match) return false;
+  return match[1] === sha1Base64(key.trim() + WS_GUID);
+}
+
+function generateWsKey(): string {
+  let binary = '';
+  for (let i = 0; i < 16; i++) binary += String.fromCharCode(Math.floor(Math.random() * 256));
+  return btoa(binary);
 }
 
 /**
@@ -184,6 +238,7 @@ interface TcpServerLike {
 }
 interface TcpSocketModule {
   createServer(onConnection: (socket: TcpSocketLike) => void): TcpServerLike;
+  createConnection(options: { host: string; port: number }, onConnect?: () => void): TcpSocketLike;
 }
 
 export class SignalingServer {
@@ -210,6 +265,17 @@ export class SignalingServer {
   private heartbeatIntervalId: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private lastPongTime = 0;
+
+  // Phone-dial-out mode (phone as WebSocket client toward the plugin's
+  // server). peerOutbound describes the CURRENT peer: framing and the
+  // handshake direction depend on it.
+  private peerOutbound = false;
+  private outboundKey = '';
+  private obsTarget: { ip: string; port: number } | null = null;
+  private dialTimer: ReturnType<typeof setInterval> | null = null;
+  private dialing = false;
+  private lastDialAt = 0;
+  private listeningAt = 0;
 
   constructor(config: TransportConfig = defaultTransportConfig) {
     this.config = { ...config };
@@ -254,6 +320,13 @@ export class SignalingServer {
         this.server = server;
         server.on('listening', () => {
           this.listening = true;
+          this.listeningAt = Date.now();
+          // Advertise this phone on the LAN and watch for the plugin's
+          // beacon; if no inbound peer shows up within the grace period, the
+          // dial timer connects to the plugin's own WebSocket server.
+          beaconDiscovery.setOnObsDiscovered(target => this.noteObsTarget(target));
+          beaconDiscovery.start(this.port);
+          this.startDialTimer();
           if (!settled) {
             settled = true;
             resolve();
@@ -281,9 +354,15 @@ export class SignalingServer {
 
   disconnect(): void {
     this.stopHeartbeat();
+    this.stopDialTimer();
+    beaconDiscovery.stop();
+    this.obsTarget = null;
+    this.dialing = false;
     const peer = this.peer;
     this.peer = null;
     this.handshaken = false;
+    this.peerOutbound = false;
+    this.outboundKey = '';
     try {
       peer?.destroy();
     } catch {
@@ -303,13 +382,84 @@ export class SignalingServer {
     this.notifyStateChange();
   }
 
+  /**
+   * A beacon reported the OBS plugin's WebSocket server. If no inbound peer
+   * has arrived after the grace period, the dial timer connects to it.
+   * Inbound always wins: an arriving server connection replaces a dial-out.
+   */
+  noteObsTarget(target: { ip: string; port: number }): void {
+    if (!target.ip || !(target.port > 0)) return;
+    this.obsTarget = { ip: target.ip, port: target.port };
+  }
+
+  private startDialTimer(): void {
+    this.stopDialTimer();
+    this.dialTimer = setInterval(() => {
+      if (!this.listening || this.isReady() || this.dialing) return;
+      if (!this.obsTarget) return;
+      const now = Date.now();
+      // Grace period: let the plugin dial us first (it prefers its own
+      // outbound connection), then back off between attempts.
+      if (now - this.listeningAt < 3000) return;
+      if (now - this.lastDialAt < 3000) return;
+      this.dial(this.obsTarget);
+    }, 1500);
+  }
+
+  private stopDialTimer(): void {
+    if (this.dialTimer) clearInterval(this.dialTimer);
+    this.dialTimer = null;
+  }
+
+  private dial(target: { ip: string; port: number }): void {
+    this.dialing = true;
+    this.lastDialAt = Date.now();
+    const TcpSocket = require('react-native-tcp-socket') as TcpSocketModule;
+    const host = `${target.ip}:${target.port}`;
+    let socket: TcpSocketLike;
+    try {
+      // The callback fires once the TCP session is established.
+      socket = TcpSocket.createConnection({ host: target.ip, port: target.port }, () => {
+        this.dialing = false;
+        // Inbound won the race while this dial was in flight — drop the dial.
+        if (this.peer) {
+          try {
+            socket.destroy();
+          } catch {
+            /* already closed */
+          }
+          return;
+        }
+        const handshake = buildHandshakeRequest(host);
+        this.outboundKey = handshake.key;
+        this.attachPeer(socket, true);
+        try {
+          socket.write(utf8Encode(handshake.request));
+        } catch {
+          this.dropPeer(socket);
+        }
+      });
+    } catch {
+      this.dialing = false;
+      return;
+    }
+    socket.on('error', (err: unknown) => {
+      this.dialing = false;
+      if (this.peer === socket) {
+        this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
+        this.dropPeer(socket);
+      }
+    });
+    socket.on('close', () => this.onPeerClosed(socket));
+  }
+
   send(data: string): boolean {
     if (!this.isReady() || !this.peer) {
       this.enqueue(data);
       return false;
     }
     try {
-      this.peer.write(encodeServerFrame(data));
+      this.peer.write(this.frame(data));
       return true;
     } catch {
       this.enqueue(data);
@@ -325,7 +475,7 @@ export class SignalingServer {
   sendBinary(data: Uint8Array): boolean {
     if (!this.isReady() || !this.peer) return false;
     try {
-      this.peer.write(encodeServerFrameBytes(data));
+      this.peer.write(this.frameBytes(data));
       return true;
     } catch {
       return false;
@@ -354,12 +504,27 @@ export class SignalingServer {
     return this.state.connected && this.handshaken && this.peer !== null;
   }
 
+  /** Frame for the CURRENT peer: masked when we dialed out (client mode). */
+  private frame(payload: string, opcode = 0x1): Uint8Array {
+    return this.peerOutbound ? encodeClientFrame(payload, opcode) : encodeServerFrame(payload, opcode);
+  }
+
+  private frameBytes(data: Uint8Array, opcode = 0x2): Uint8Array {
+    return this.peerOutbound ? encodeClientFrameBytes(data, opcode) : encodeServerFrameBytes(data, opcode);
+  }
+
   // -------------------------------------------------------------------------
   // Connection lifecycle
   // -------------------------------------------------------------------------
 
   private onConnection(socket: TcpSocketLike): void {
-    // Single active receiver: a new OBS connection replaces the previous one.
+    // Inbound wins the race: a new OBS connection replaces whatever is
+    // active, including a phone-initiated dial-out (prefer listening server
+    // mode so the plugin's preferred outbound dial converges on this socket).
+    this.attachPeer(socket, false);
+  }
+
+  private attachPeer(socket: TcpSocketLike, outbound: boolean): void {
     const previous = this.peer;
     this.peer = null;
     if (previous) {
@@ -376,6 +541,8 @@ export class SignalingServer {
     }
 
     this.peer = socket;
+    this.peerOutbound = outbound;
+    if (!outbound) this.outboundKey = '';
     this.parser = new WsFrameParser();
     this.handshakeBuf = new Uint8Array(0);
     this.handshaken = false;
@@ -401,6 +568,24 @@ export class SignalingServer {
       }
       const headerEnd = indexOfHeaderEnd(this.handshakeBuf);
       if (headerEnd < 0) return;
+
+      if (this.peerOutbound) {
+        // Phone-dial-out: verify the plugin's 101 response before any frames.
+        const headerText = bytesToLatin1(this.handshakeBuf.subarray(0, headerEnd));
+        const remainder = this.handshakeBuf.slice(headerEnd + 4);
+        this.handshakeBuf = new Uint8Array(0);
+        const accepted =
+          /^HTTP\/1\.1 101/.test(headerText) &&
+          verifyHandshakeAccept(headerText, this.outboundKey);
+        if (!accepted) {
+          this.dropPeer(socket);
+          return;
+        }
+        this.handshaken = true;
+        this.markConnected();
+        if (remainder.length > 0) this.dispatchFrames(socket, remainder);
+        return;
+      }
 
       const headerText = bytesToLatin1(this.handshakeBuf.subarray(0, headerEnd));
       const keyMatch = /sec-websocket-key:\s*([^\s]+)/i.exec(headerText);
@@ -446,7 +631,7 @@ export class SignalingServer {
       switch (frame.opcode) {
         case 0x8: // close
           try {
-            socket.write(encodeServerFrame('', 0x8));
+            socket.write(this.frame('', 0x8));
           } catch {
             /* best effort */
           }
@@ -454,7 +639,7 @@ export class SignalingServer {
           return;
         case 0x9: // ping → pong
           try {
-            socket.write(encodeServerFrame(utf8Decode(frame.payload), 0xa));
+            socket.write(this.frame(utf8Decode(frame.payload), 0xa));
           } catch {
             /* best effort */
           }
@@ -531,7 +716,7 @@ export class SignalingServer {
         return;
       }
       try {
-        this.peer.write(encodeServerFrame(JSON.stringify({ type: 'PING' })));
+        this.peer.write(this.frame(JSON.stringify({ type: 'PING' })));
       } catch {
         this.dropPeer(this.peer);
         return;
@@ -565,7 +750,7 @@ export class SignalingServer {
     while (this.messageQueue.length > 0) {
       const message = this.messageQueue[0];
       try {
-        this.peer.write(encodeServerFrame(message));
+        this.peer.write(this.frame(message));
         this.messageQueue.shift();
       } catch {
         break;

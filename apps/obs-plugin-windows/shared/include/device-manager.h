@@ -29,10 +29,17 @@ public:
     void AddDevice(const DiscoveredDevice &device);
     void RemoveDevice(const std::string &device_id);
 
-    // Set a callback that fires whenever a new device is discovered
+    // Set a callback that fires whenever a phone beacon arrives. Clearing it
+    // (nullptr) waits for any in-flight invocation, so the caller may safely
+    // tear down whatever the callback captured afterwards.
     void SetDeviceCallback(DeviceCallback cb);
 
-    // Start/stop mDNS browsing explicitly
+    // Backend entry point: records a device (latest entry for a phone wins,
+    // so IP changes replace stale addresses) and fires the device callback.
+    void HandleDiscovered(const DiscoveredDevice &device);
+
+    // Start/stop discovery (UDP beacons always; mDNS additionally where the
+    // platform provides it). Idempotent.
     void StartDiscovery();
     void StopDiscovery();
 
@@ -45,9 +52,15 @@ private:
     std::vector<DiscoveredDevice> devices_;
     mutable std::mutex mutex_;
     DeviceCallback device_cb_;
+    // Held while a callback runs; cleared callbacks wait on it (drain) so a
+    // listener can be destroyed without an in-flight call racing its death.
+    mutable std::mutex invoke_mutex_;
 
     // Platform-specific mDNS handle (opaque pointer)
     void* mdns_ref_ = nullptr;
+    // UDP beacon context (opaque pointer) — broadcasts this plugin's listen
+    // port and receives the phone's beacons on the shared discovery port.
+    void* udp_ref_ = nullptr;
     bool discovery_running_ = false;
 };
 

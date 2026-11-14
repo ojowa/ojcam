@@ -21,8 +21,12 @@ class StreamReceiver;
  */
 class SharedSession {
 public:
+    // signaling_url may be empty when auto_discover is on — the session then
+    // keys on the device (or "auto") and forms once the phone is discovered
+    // on the local network.
     static std::shared_ptr<StreamReceiver> acquire(const std::string& device_id,
-                                                   const std::string& signaling_url);
+                                                   const std::string& signaling_url,
+                                                   bool auto_discover = false);
 
 private:
     static std::mutex& mutex();

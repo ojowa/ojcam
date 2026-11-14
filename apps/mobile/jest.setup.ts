@@ -86,6 +86,19 @@ jest.mock('react-native-tcp-socket', () => ({
     close: jest.fn(),
     on: jest.fn(),
   })),
+  createConnection: jest.fn(),
+}));
+
+// Mock react-native-udp (same-network beacon discovery)
+jest.mock('react-native-udp', () => ({
+  createSocket: jest.fn(() => ({
+    send: jest.fn(),
+    bind: jest.fn((_port: number, cb?: () => void) => {
+      cb?.();
+    }),
+    close: jest.fn(),
+    on: jest.fn(),
+  })),
 }));
 
 // Mock expo-network (local IP shown in the connection UI)

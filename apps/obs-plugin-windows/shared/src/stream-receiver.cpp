@@ -1,5 +1,6 @@
 #include "stream-receiver.h"
 #include <transport/webrtc-transport.h>
+#include <device-manager.h>
 #include <obs-module.h>
 #include <atomic>
 #include <chrono>
@@ -21,6 +22,10 @@ struct StreamReceiver::Impl {
 
     std::string device_id;
     std::string signaling_url;
+    bool auto_discover = false;
+    // True while this receiver owns the DeviceManager discovery callback
+    // (cleared on disconnect/teardown so it cannot outlive the receiver).
+    bool owns_device_cb = false;
     std::atomic<bool> connected{false};
 
     // Auto-reconnect state (single-flight worker)
@@ -198,7 +203,7 @@ void StreamReceiver::reconnectWorker(std::string device_id, std::string signalin
         // loop when the worker called it). Failure paths only schedule when
         // no worker is running — here reconnect_running_ is true, so those
         // scheduleReconnect() calls are no-ops and we advance below.
-        const bool ok = connect(device_id, signaling_url);
+        const bool ok = connect(device_id, signaling_url, impl_->auto_discover);
 
         if (ok && impl_->connected.load(std::memory_order_acquire)) {
             // connect() already restored the attempt budget on success.
@@ -239,7 +244,8 @@ void StreamReceiver::cancelReconnectAndWait() {
 }
 
 bool StreamReceiver::connect(const std::string& device_id,
-                              const std::string& signaling_url) {
+                              const std::string& signaling_url,
+                              bool auto_discover) {
     {
         // Re-enable auto-reconnect only for external/manual connects.
         // The reconnect worker must not clear stop_reconnect_ — disconnect()
@@ -253,6 +259,8 @@ bool StreamReceiver::connect(const std::string& device_id,
     }
     impl_->device_id = device_id;
     impl_->signaling_url = signaling_url;
+    impl_->auto_discover = auto_discover;
+    impl_->transport->setConnectionOptions(auto_discover);
 
     // Initialize decoders based on expected stream config
     if (!impl_->video_decoder->isInitialized()) {
@@ -269,13 +277,36 @@ bool StreamReceiver::connect(const std::string& device_id,
         return false;
     }
 
+    // Same-network discovery: dial the phone whenever a beacon reports its
+    // current address (covers empty or stale manual URLs and IP changes).
+    // The callback gates on isConnected so a live session stays silent.
+    if (auto_discover) {
+        auto* dm = DeviceManager::GetInstance();
+        dm->SetDeviceCallback([this](const DiscoveredDevice& dev) {
+            if (!impl_ || !impl_->transport) return;
+            if (impl_->transport->isConnected()) return;
+            const std::string target =
+                "ws://" + dev.ip_address + ":" + std::to_string(dev.port);
+            blog(LOG_INFO, "[Ojowacam] Same-network discovery: dialing %s", target.c_str());
+            impl_->transport->connect(target);
+        });
+        impl_->owns_device_cb = true;
+        dm->StartDiscovery(); // idempotent (module load also starts it)
+    }
+
     // The phone is the offerer; OBS answers when its OFFER arrives.
     impl_->connected.store(true, std::memory_order_release);
     // Reset only on success — never on entry. Entry reset is what made
     // kMaxReconnectAttempts unreachable (worker calls connect() each retry).
     impl_->reconnect_attempts_.store(0, std::memory_order_relaxed);
 
-    blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
+    if (impl_->transport->isConnected()) {
+        blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
+    } else {
+        blog(LOG_INFO,
+             "[Ojowacam] Engaged for device %s — waiting for the phone (auto-discovery)",
+             device_id.c_str());
+    }
     return true;
 }
 
@@ -341,6 +372,13 @@ void StreamReceiver::disconnect() {
     // Intentional teardown: cancel auto-reconnect before dropping the
     // transport (its disconnect callback would otherwise schedule a retry).
     cancelReconnectAndWait();
+
+    // Drop the discovery callback first so a late beacon cannot dial through
+    // a receiver that is tearing down.
+    if (impl_->owns_device_cb) {
+        DeviceManager::GetInstance()->SetDeviceCallback(nullptr);
+        impl_->owns_device_cb = false;
+    }
 
     impl_->transport->disconnect();
     impl_->connected.store(false, std::memory_order_release);

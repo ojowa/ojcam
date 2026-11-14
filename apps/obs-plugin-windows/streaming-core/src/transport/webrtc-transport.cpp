@@ -12,6 +12,12 @@
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <cctype>
+
+// Real WebSocket server handshake (Sec-WebSocket-Accept = base64(sha1(key +
+// GUID))) — mbedtls ships with the streaming-core dependency set.
+#include <mbedtls/sha1.h>
+#include <mbedtls/base64.h>
 
 #ifdef OJO_WEBRTC_ENABLED
     #if defined(__APPLE__)
@@ -68,31 +74,41 @@ static std::vector<uint8_t> ws_mask_key() {
     return key;
 }
 
-static std::vector<uint8_t> ws_frame_text(const std::string& payload, uint8_t opcode = 0x1) {
+// Builds one RFC 6455 frame. Clients MUST mask; servers MUST NOT.
+static std::vector<uint8_t> ws_build_frame(const std::string& payload, uint8_t opcode,
+                                           bool mask) {
     std::vector<uint8_t> frame;
     frame.push_back(static_cast<uint8_t>(0x80 | (opcode & 0x0F))); // FIN + opcode
     uint64_t len = payload.size();
     if (len <= 125) {
-        frame.push_back(static_cast<uint8_t>(0x80 | len));
+        frame.push_back(static_cast<uint8_t>((mask ? 0x80 : 0x00) | len));
     } else if (len <= 65535) {
-        frame.push_back(0x80 | 0x7E);
+        frame.push_back(static_cast<uint8_t>((mask ? 0x80 : 0x00) | 0x7E));
         frame.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
         frame.push_back(static_cast<uint8_t>(len & 0xFF));
     } else {
-        frame.push_back(0x80 | 0x7F);
+        frame.push_back(static_cast<uint8_t>((mask ? 0x80 : 0x00) | 0x7F));
         for (int i = 7; i >= 0; --i)
             frame.push_back(static_cast<uint8_t>((len >> (i * 8)) & 0xFF));
     }
-    auto mask = ws_mask_key();
-    frame.insert(frame.end(), mask.begin(), mask.end());
-    for (size_t i = 0; i < payload.size(); ++i) {
-        frame.push_back(static_cast<uint8_t>(payload[i] ^ mask[i % 4]));
+    if (mask) {
+        auto mask_key = ws_mask_key();
+        frame.insert(frame.end(), mask_key.begin(), mask_key.end());
+        for (size_t i = 0; i < payload.size(); ++i) {
+            frame.push_back(static_cast<uint8_t>(payload[i] ^ mask_key[i % 4]));
+        }
+    } else {
+        for (char c : payload) frame.push_back(static_cast<uint8_t>(c));
     }
     return frame;
 }
 
-static bool ws_send(ojo_socket_t sock, const std::string& message) {
-    auto frame = ws_frame_text(message);
+static std::vector<uint8_t> ws_frame_text(const std::string& payload, uint8_t opcode = 0x1) {
+    return ws_build_frame(payload, opcode, true);
+}
+
+static bool ws_send(ojo_socket_t sock, const std::string& message, bool mask = true) {
+    auto frame = ws_build_frame(message, 0x1, mask);
     int sent = send(sock, reinterpret_cast<const char*>(frame.data()),
                     static_cast<int>(frame.size()), 0);
     return sent == static_cast<int>(frame.size());
@@ -145,10 +161,16 @@ static bool ws_recv_frame(ojo_socket_t sock, std::string& out, bool& fin, uint8_
 
 class SignalingClient {
 public:
-    SignalingClient() : sock_(INVALID_SOCKET), running_(false) {}
+    // Dial: the plugin connected outbound (frames masked). Accept: the phone
+    // dialed the plugin's server and the handshake already completed here
+    // (frames unmasked).
+    enum class Role { Dial, Accept };
+
+    SignalingClient() : sock_(INVALID_SOCKET), running_(false), role_(Role::Dial) {}
     ~SignalingClient() { stop(); }
 
     bool connect(const std::string& url) {
+        role_ = Role::Dial;
         std::string host, path;
         int port = 80;
         size_t pos = url.find("://");
@@ -228,10 +250,32 @@ public:
         if (recv_thread_.joinable()) recv_thread_.join();
     }
 
+    /** True while a signaling socket is live (either role). */
+    bool isActive() const {
+        return running_.load() && sock_ != INVALID_SOCKET;
+    }
+
+    /**
+     * Adopt an already-handshaken inbound socket (phone -> plugin server).
+     * Returns false if a session is already live; ownership passes to this
+     * object on success (closed here on failure).
+     */
+    bool accept(ojo_socket_t sock) {
+        if (isActive()) return false;
+        // A previous session's recv thread may still be in its tail; join it
+        // first so its socket close cannot race the adoption below.
+        if (recv_thread_.joinable()) recv_thread_.join();
+        role_ = Role::Accept;
+        sock_ = sock;
+        running_ = true;
+        recv_thread_ = std::thread(&SignalingClient::recvLoop, this);
+        return true;
+    }
+
     bool sendMessage(const std::string& message) {
         std::lock_guard<std::mutex> lock(send_mutex_);
         if (sock_ == INVALID_SOCKET) return false;
-        return ws_send(sock_, message);
+        return ws_send(sock_, message, role_ == Role::Dial);
     }
 
     std::function<void(const std::string&)> onMessage;
@@ -248,8 +292,8 @@ private:
                 case 0x8: // close
                     running_ = false;
                     break;
-                case 0x9: { // ping → pong (echo payload)
-                    std::vector<uint8_t> pong = ws_frame_text(msg, 0xA);
+                case 0x9: { // ping → pong (echo payload, same framing role)
+                    std::vector<uint8_t> pong = ws_build_frame(msg, 0xA, role_ == Role::Dial);
                     send(sock_, reinterpret_cast<const char*>(pong.data()),
                          static_cast<int>(pong.size()), 0);
                     break;
@@ -274,8 +318,161 @@ private:
 
     ojo_socket_t sock_;
     std::atomic<bool> running_;
+    Role role_;
     std::thread recv_thread_;
     std::mutex send_mutex_;
+};
+
+// ===========================================================================
+// WebSocket signaling server (the phone can dial the plugin)
+// ===========================================================================
+
+class WsListener {
+public:
+    using AcceptHandler = std::function<void(ojo_socket_t)>;
+
+    ~WsListener() { stop(); }
+
+    // Bind + accept loop. Idempotent: a second start keeps the first server.
+    bool start(uint16_t port, AcceptHandler handler) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (running_) return true;
+
+#ifdef _WIN32
+        WSADATA wsa;
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+        listen_sock_ = socket(AF_INET, SOCK_STREAM, 0);
+        if (listen_sock_ == INVALID_SOCKET) return false;
+
+        int on = 1;
+        setsockopt(listen_sock_, SOL_SOCKET, SO_REUSEADDR,
+                   reinterpret_cast<const char*>(&on), sizeof(on));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (bind(listen_sock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
+            listen(listen_sock_, 4) == SOCKET_ERROR) {
+            blog(LOG_ERROR, "[Ojowacam] WebSocket server: bind/listen on port %u failed", port);
+            CLOSE_SOCKET(listen_sock_);
+            listen_sock_ = INVALID_SOCKET;
+            return false;
+        }
+
+        handler_ = std::move(handler);
+        running_ = true;
+        accept_thread_ = std::thread(&WsListener::acceptLoop, this);
+        blog(LOG_INFO, "[Ojowacam] WebSocket server listening on port %u", port);
+        return true;
+    }
+
+    void stop() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_ && listen_sock_ == INVALID_SOCKET) return;
+        running_ = false;
+        if (listen_sock_ != INVALID_SOCKET) {
+            CLOSE_SOCKET(listen_sock_); // unblocks accept()
+            listen_sock_ = INVALID_SOCKET;
+        }
+        if (accept_thread_.joinable()) accept_thread_.join();
+    }
+
+private:
+    void acceptLoop() {
+        while (running_) {
+            sockaddr_in peer{};
+            socklen_t peer_len = sizeof(peer);
+            ojo_socket_t client = accept(listen_sock_, reinterpret_cast<sockaddr*>(&peer), &peer_len);
+            if (client == INVALID_SOCKET) {
+                if (running_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+            if (!performHandshake(client)) {
+                CLOSE_SOCKET(client);
+                continue;
+            }
+            if (handler_) {
+                handler_(client);
+            } else {
+                CLOSE_SOCKET(client);
+            }
+        }
+    }
+
+    // Completes the server side of the opening handshake: verifies the
+    // request, computes Sec-WebSocket-Accept = base64(sha1(key + GUID)), and
+    // replies 101 Switching Protocols.
+    static bool performHandshake(ojo_socket_t client) {
+        std::string request;
+        char buf[2048];
+        while (request.find("\r\n\r\n") == std::string::npos && request.size() < 16384) {
+            int n = recv(client, buf, sizeof(buf), 0);
+            if (n <= 0) return false;
+            request.append(buf, static_cast<size_t>(n));
+        }
+        if (request.size() >= 16384) return false;
+
+        static const char* key_header = "sec-websocket-key:";
+        std::string lower = request;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        size_t key_pos = lower.find(key_header);
+        if (key_pos == std::string::npos) return false;
+        size_t value_start = key_pos + std::strlen(key_header);
+        while (value_start < request.size() && request[value_start] == ' ') ++value_start;
+        size_t value_end = request.find("\r\n", value_start);
+        if (value_end == std::string::npos) return false;
+        std::string key = request.substr(value_start, value_end - value_start);
+        if (key.empty()) return false;
+
+        static const char* guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        std::string digest_input = key + guid;
+        unsigned char sha[20];
+        if (mbedtls_sha1(reinterpret_cast<const unsigned char*>(digest_input.data()),
+                         digest_input.size(), sha) != 0) {
+            return false;
+        }
+        unsigned char accept_buf[64];
+        size_t accept_len = 0;
+        if (mbedtls_base64_encode(accept_buf, sizeof(accept_buf), &accept_len, sha,
+                                  sizeof(sha)) != 0) {
+            return false;
+        }
+
+        std::string response =
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Accept: " +
+            std::string(reinterpret_cast<char*>(accept_buf), accept_len) + "\r\n\r\n";
+        size_t sent = 0;
+        while (sent < response.size()) {
+            int n = send(client, response.data() + sent,
+                         static_cast<int>(response.size() - sent), 0);
+            if (n <= 0) return false;
+            sent += static_cast<size_t>(n);
+        }
+        return true;
+    }
+
+    std::mutex mutex_;
+    ojo_socket_t listen_sock_ = INVALID_SOCKET;
+    std::atomic<bool> running_{false};
+    std::thread accept_thread_;
+    AcceptHandler handler_;
+};
+
+// Session-independent transport state: the plugin's WebSocket server and
+// connection options, destroyed before Impl so the accept thread cannot
+// reference a torn-down session.
+struct WebRTCTransport::Host {
+    WsListener listener;
+    std::atomic<bool> auto_discover{false};
+    // Serializes connect() (which may block in a dial) against inbound
+    // accepts and session teardown.
+    std::mutex state_mutex;
 };
 
 // ===========================================================================
@@ -380,10 +577,26 @@ struct WebRTCTransport::Impl {
 
 #endif
 
-WebRTCTransport::WebRTCTransport() : impl_(new Impl()) {}
-WebRTCTransport::~WebRTCTransport() { disconnect(); delete impl_; }
+WebRTCTransport::WebRTCTransport() : impl_(new Impl()), host_(new Host()) {}
+WebRTCTransport::~WebRTCTransport() {
+    disconnect();
+    // Stop the accept thread before impl_ goes away (its handler touches it).
+    host_.reset();
+    delete impl_;
+}
+
+void WebRTCTransport::setConnectionOptions(bool auto_discover) {
+    host_->auto_discover.store(auto_discover, std::memory_order_release);
+}
 
 bool WebRTCTransport::connect(const std::string& url) {
+    // Serializes against inbound accepts and other connect() callers
+    // (reconnect worker, discovery callback).
+    std::lock_guard<std::mutex> host_lock(host_->state_mutex);
+
+    // A live session is never torn down by a repeat connect.
+    if (connected_) return true;
+
     impl_->url = url;
 
 #if defined(OJO_LIBDATACHANNEL)
@@ -422,71 +635,129 @@ bool WebRTCTransport::connect(const std::string& url) {
         if (onConnectionStateChanged) onConnectionStateChanged(connected);
     };
 
-    if (!impl_->signaling->connect(url)) {
-        blog(LOG_WARNING, "[Ojowacam] WebSocket signaling connect failed: %s", url.c_str());
-        impl_->connected = false;
-        connected_ = false;
-        if (onConnectionStateChanged) onConnectionStateChanged(false);
-        return false;
+    // The plugin always hosts a WebSocket server so the phone can dial in
+    // ("both ends host") — idempotent across reconnects.
+    host_->listener.start(kPluginWsPort, [this](ojo_socket_t socket) {
+        this->onInboundSignaling(static_cast<uintptr_t>(socket));
+    });
+
+    bool dialed = false;
+    if (!url.empty()) {
+        dialed = impl_->signaling->connect(url);
+        if (!dialed) {
+            blog(LOG_WARNING, "[Ojowacam] WebSocket signaling connect failed: %s", url.c_str());
+        }
     }
 
+    if (dialed) {
+        // The phone is the offerer and speaks first (PAIRING_REQUEST/OFFER/
+        // PING); OBS only answers. No join message is sent.
+        markSessionActive("outbound dial");
+        return true;
+    }
+
+    if (host_->auto_discover.load(std::memory_order_acquire)) {
+        // Engaged, not failed: the listener is up and same-network beacons
+        // (or a dial from the phone) activate the session whenever the phone
+        // appears — any IP, no manual configuration.
+        blog(LOG_INFO,
+             "[Ojowacam] Waiting for the phone (listening on %u, UDP discovery on %u)",
+             kPluginWsPort, kDiscoveryUdpPort);
+        return true;
+    }
+
+    impl_->connected = false;
+    connected_ = false;
+    if (onConnectionStateChanged) onConnectionStateChanged(false);
+    return false;
+}
+
+void WebRTCTransport::onInboundSignaling(uintptr_t socket_handle) {
+    ojo_socket_t socket = static_cast<ojo_socket_t>(socket_handle);
+    std::lock_guard<std::mutex> lock(host_->state_mutex);
+
+    if (connected_ || (impl_->signaling && impl_->signaling->isActive())) {
+        // First session wins: the plugin prefers its own outbound connection,
+        // so a simultaneous dial from the phone is rejected cleanly.
+        CLOSE_SOCKET(socket);
+        return;
+    }
+    if (!impl_->signaling) {
+        // connect() has not wired signaling yet; nothing can own this socket.
+        CLOSE_SOCKET(socket);
+        return;
+    }
+    if (!impl_->signaling->accept(socket)) {
+        CLOSE_SOCKET(socket);
+        return;
+    }
+    blog(LOG_INFO, "[Ojowacam] Signaling connection from the phone accepted");
+    markSessionActive("inbound dial");
+}
+
+void WebRTCTransport::markSessionActive(const char* how) {
     impl_->connected = true;
     connected_ = true;
-    blog(LOG_INFO, "[Ojowacam] WebRTC signaling connected: %s", url.c_str());
-
-    // The phone hosts the server and speaks first (PAIRING_REQUEST/OFFER/PING);
-    // OBS only answers. No join message is sent.
-
+    blog(LOG_INFO, "[Ojowacam] WebRTC signaling active (%s)", how);
     if (onConnectionStateChanged) onConnectionStateChanged(true);
-    return true;
 }
 
 void WebRTCTransport::disconnect() {
-    impl_->connected = false;
-    connected_ = false;
+    // Tear the session down under the state lock, but stop() (which joins
+    // the recv thread; that thread's onStateChanged may run a reconnect
+    // path that wants this lock) happens after the lock is released.
+    std::unique_ptr<SignalingClient> doomed;
+    {
+        std::lock_guard<std::mutex> host_lock(host_->state_mutex);
+        impl_->connected = false;
+        connected_ = false;
 
 #ifdef OJO_WEBRTC_ENABLED
-    if (impl_->peer_connection) {
+        if (impl_->peer_connection) {
 #if defined(__APPLE__)
-        [impl_->peer_connection close];
-        impl_->peer_connection = nullptr;
+            [impl_->peer_connection close];
+            impl_->peer_connection = nullptr;
 #elif defined(_WIN32)
-        impl_->peer_connection->Close();
-        impl_->peer_connection = nullptr;
+            impl_->peer_connection->Close();
+            impl_->peer_connection = nullptr;
 #endif
-    }
+        }
 #endif  // OJO_WEBRTC_ENABLED
 
 #ifdef OJO_LIBDATACHANNEL
-    {
-        std::lock_guard<std::mutex> lock(impl_->pc_mutex);
-        if (impl_->peer_connection) {
-            impl_->peer_connection->close();
-            impl_->peer_connection = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(impl_->pc_mutex);
+            if (impl_->peer_connection) {
+                impl_->peer_connection->close();
+                impl_->peer_connection = nullptr;
+            }
         }
-    }
-    impl_->video_codec_by_pt.clear();
-    {
-        std::lock_guard<std::mutex> lock(impl_->audio_mutex);
+        impl_->video_codec_by_pt.clear();
+        {
+            std::lock_guard<std::mutex> lock(impl_->audio_mutex);
 #ifdef OJO_OPUS_ENABLED
-        if (impl_->opus_decoder) {
-            opus_decoder_destroy(impl_->opus_decoder);
-            impl_->opus_decoder = nullptr;
-            impl_->opus_channels = 0;
-        }
+            if (impl_->opus_decoder) {
+                opus_decoder_destroy(impl_->opus_decoder);
+                impl_->opus_decoder = nullptr;
+                impl_->opus_channels = 0;
+            }
 #endif
-    }
+        }
 #endif  // OJO_LIBDATACHANNEL
 
-    impl_->local_sdp.clear();
-    impl_->remote_sdp.clear();
-    {
-        std::lock_guard<std::mutex> lock(impl_->session_mutex);
-        impl_->session_token.clear();
-        impl_->pending_session_id.clear();
+        impl_->local_sdp.clear();
+        impl_->remote_sdp.clear();
+        {
+            std::lock_guard<std::mutex> lock(impl_->session_mutex);
+            impl_->session_token.clear();
+            impl_->pending_session_id.clear();
+        }
+        doomed = std::move(impl_->signaling);
     }
-    if (impl_->signaling) impl_->signaling->stop();
-    impl_->signaling.reset();
+    if (doomed) {
+        doomed->stop();
+        doomed.reset();
+    }
     if (onConnectionStateChanged) onConnectionStateChanged(false);
 }
 

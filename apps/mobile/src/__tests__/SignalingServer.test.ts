@@ -6,15 +6,21 @@
 import {
   SignalingServer,
   encodeServerFrame,
+  encodeClientFrame,
+  encodeClientFrameBytes,
+  buildHandshakeRequest,
+  verifyHandshakeAccept,
   WsFrameParser,
   buildHandshakeResponse,
   utf8Encode,
   utf8Decode,
   defaultTransportConfig,
 } from '../services/signaling/SignalingServer';
+import { parseObsBeacon, buildPhoneBeacon } from '../services/discovery/BeaconDiscovery';
 
 jest.mock('react-native-tcp-socket', () => ({
   createServer: jest.fn(),
+  createConnection: jest.fn(),
 }));
 
 import TcpSocket from 'react-native-tcp-socket';
@@ -284,5 +290,169 @@ describe('SignalingServer', () => {
     await server.connect();
     expect(fakeServer.listen).toHaveBeenCalledWith(expect.objectContaining({ port: 9999 }));
     server.disconnect();
+  });
+
+  describe('phone dial-out (discovers the plugin server)', () => {
+    let dialSocket: FakeSocket | undefined;
+    let dialConnect: (() => void) | undefined;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      dialSocket = undefined;
+      dialConnect = undefined;
+      (TcpSocket.createConnection as unknown as jest.Mock).mockReset();
+      (TcpSocket.createConnection as unknown as jest.Mock).mockImplementation(
+        (_opts: unknown, cb?: () => void) => {
+          dialSocket = new FakeSocket();
+          dialConnect = cb;
+          return dialSocket;
+        },
+      );
+    });
+
+    afterEach(() => {
+      server.disconnect();
+      jest.useRealTimers();
+    });
+
+    it('waits out the inbound grace period, dials, and accepts the 101', async () => {
+      await server.connect();
+      server.noteObsTarget({ ip: '10.110.195.204', port: 8766 });
+
+      jest.advanceTimersByTime(2000);
+      expect(TcpSocket.createConnection).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1600); // grace period elapsed
+      expect(TcpSocket.createConnection).toHaveBeenCalledWith(
+        { host: '10.110.195.204', port: 8766 },
+        expect.any(Function),
+      );
+      expect(dialSocket).toBeDefined();
+
+      dialConnect?.(); // TCP session established
+      const request = dialSocket!.textWritten(0);
+      expect(request).toContain('GET / HTTP/1.1');
+      expect(request).toContain('Sec-WebSocket-Key:');
+      expect(server.isConnected()).toBe(false);
+
+      const key = /sec-websocket-key:\s*([^\s\r\n]+)/i.exec(request)?.[1] ?? '';
+      dialSocket!.emit('data', utf8Encode(buildHandshakeResponse(key)));
+      expect(server.isConnected()).toBe(true);
+      expect(states.some(s => s.connected)).toBe(true);
+
+      // Connected as the client: outbound frames MUST be masked.
+      server.send('{"type":"OFFER"}');
+      const frame = dialSocket!.written[dialSocket!.written.length - 1];
+      expect(frame[0] & 0x0f).toBe(0x1);
+      expect(frame[1] & 0x80).toBe(0x80);
+      const parsed = new WsFrameParser().push(frame);
+      expect(utf8Decode(parsed[0].payload)).toBe('{"type":"OFFER"}');
+    });
+
+    it('drops the dial when an inbound peer wins the race', async () => {
+      await server.connect();
+      server.noteObsTarget({ ip: '10.110.195.204', port: 8766 });
+      jest.advanceTimersByTime(3100); // dial in flight
+      expect(dialSocket).toBeDefined();
+
+      // Inbound OBS connection completes before the dial's connect callback.
+      const inbound = new FakeSocket();
+      connectionHandler?.(inbound);
+      inbound.emit('data', utf8Encode(clientHandshake()));
+      expect(server.isConnected()).toBe(true);
+
+      dialConnect?.(); // late dial connect must be discarded
+      expect(dialSocket!.destroyed).toBe(true);
+      expect(inbound.destroyed).toBe(false);
+      expect(server.isConnected()).toBe(true);
+
+      inbound.emit('data', maskClientFrame('{"type":"PONG"}'));
+      expect(messages).toEqual(['{"type":"PONG"}']);
+    });
+
+    it('never dials while an inbound peer is ready', async () => {
+      await server.connect();
+      server.noteObsTarget({ ip: '10.110.195.204', port: 8766 });
+      const inbound = new FakeSocket();
+      connectionHandler?.(inbound);
+      inbound.emit('data', utf8Encode(clientHandshake()));
+      expect(server.isConnected()).toBe(true);
+
+      jest.advanceTimersByTime(10000);
+      expect(TcpSocket.createConnection).not.toHaveBeenCalled();
+    });
+
+    it('stops advertising and dialing on disconnect', async () => {
+      await server.connect();
+      server.noteObsTarget({ ip: '10.110.195.204', port: 8766 });
+      server.disconnect();
+      jest.advanceTimersByTime(10000);
+      expect(TcpSocket.createConnection).not.toHaveBeenCalled();
+      expect(server.isListening()).toBe(false);
+    });
+  });
+});
+
+describe('client-mode framing (phone dial-out)', () => {
+  it('masks client text frames per RFC 6455 §5.3', () => {
+    const frame = encodeClientFrame('hello');
+    expect(frame[0]).toBe(0x81);
+    expect(frame[1] & 0x80).toBe(0x80); // mask bit set
+    expect(frame[1] & 0x7f).toBe(5); // length still readable
+    const parsed = new WsFrameParser().push(frame);
+    expect(utf8Decode(parsed[0].payload)).toBe('hello');
+  });
+
+  it('masks 16-bit length binary client frames and round-trips', () => {
+    const payload = new Uint8Array(300);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    const frame = encodeClientFrameBytes(payload);
+    expect(frame[1] & 0x80).toBe(0x80);
+    expect(frame[1] & 0x7f).toBe(126);
+    const parsed = new WsFrameParser().push(frame);
+    expect(Array.from(parsed[0].payload)).toEqual(Array.from(payload));
+  });
+
+  it('keeps server frames unmasked', () => {
+    const frame = encodeServerFrame('hello');
+    expect(frame[1] & 0x80).toBe(0);
+  });
+});
+
+describe('client handshake request', () => {
+  it('produces a request the server-side handshake accepts', () => {
+    const { request, key } = buildHandshakeRequest('10.110.195.204:8766', CLIENT_KEY);
+    expect(request.startsWith('GET / HTTP/1.1\r\n')).toBe(true);
+    expect(request).toContain('Host: 10.110.195.204:8766\r\n');
+    expect(request).toContain(`Sec-WebSocket-Key: ${CLIENT_KEY}\r\n`);
+    expect(request.endsWith('\r\n\r\n')).toBe(true);
+    expect(verifyHandshakeAccept(buildHandshakeResponse(key), key)).toBe(true);
+  });
+
+  it('rejects wrong or missing accept values', () => {
+    const { key } = buildHandshakeRequest('x:8766', CLIENT_KEY);
+    expect(verifyHandshakeAccept(buildHandshakeResponse(key), 'b3RoZXIga2V5')).toBe(false);
+    expect(verifyHandshakeAccept('HTTP/1.1 200 OK\r\n\r\n', key)).toBe(false);
+  });
+});
+
+describe('parseObsBeacon', () => {
+  const src = '10.110.195.204';
+
+  it('accepts the plugin beacon and uses the datagram source IP', () => {
+    expect(parseObsBeacon(utf8Encode('OJOWACAM|1|role=obs|ws=8766'), src)).toEqual({
+      ip: src,
+      port: 8766,
+    });
+  });
+
+  it('ignores phone beacons, bad ports, and foreign payloads', () => {
+    expect(parseObsBeacon(buildPhoneBeacon(8765), src)).toBeNull();
+    expect(parseObsBeacon(utf8Encode('OJOWACAM|1|role=obs|ws=99999'), src)).toBeNull();
+    expect(parseObsBeacon(utf8Encode('OJOWACAM|1|role=obs|ws=abc'), src)).toBeNull();
+    expect(parseObsBeacon(utf8Encode('OJOWACAM|1|role=obs'), src)).toBeNull();
+    expect(parseObsBeacon(utf8Encode('HELLO|1|role=obs|ws=8766'), src)).toBeNull();
+    expect(parseObsBeacon(utf8Encode('OJOWACAM|1|role=obs|ws=8766'), '0.0.0.0')).toBeNull();
+    expect(parseObsBeacon('OJOWACAM|1|role=obs|ws=8766', '')).toBeNull();
   });
 });

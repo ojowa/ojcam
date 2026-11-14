@@ -166,13 +166,16 @@ export class StreamingService {
     this.notifyStateChange();
     try {
       await signalingService.initialize();
-      if (!signalingService.isConnected()) {
+      if (!signalingService.isListening()) {
         await signalingService.connect();
       }
-      this.state.isConnected = signalingService.isConnected();
-      if (!this.state.isConnected) {
-        throw new Error(`Unable to connect to ${url}`);
+      // Success means the phone's WebSocket server bound its port. A peer
+      // (the OBS plugin) may attach later — discovery and the phone's dial
+      // out handle that, so "no peer yet" is NOT an error here.
+      if (!signalingService.isListening()) {
+        throw new Error(`Unable to start the signaling server on ${url}`);
       }
+      this.state.isConnected = signalingService.isConnected();
       this.notifyStateChange();
       return url;
     } catch (error) {

@@ -164,6 +164,8 @@ export class SignalingService {
   }
   getState(): TransportState { return this.transport.getState(); }
   isConnected(): boolean { return this.transport.isConnected(); }
+  /** True once the phone-hosted server bound its port (peer may join later). */
+  isListening(): boolean { return this.transport.isListening(); }
   isAuthenticated(): boolean { return authService.isAuthenticated(); }
   getSessionTTL(): number { return authService.getSessionTTL(); }
 }

@@ -154,8 +154,9 @@ export default function ConnectionScreen() {
               : signalingUrl || 'ws://0.0.0.0:8765'}
           </Text>
           <Text style={styles.hostHint}>
-            The phone hosts the signaling server. Open the Ojowacam source in
-            OBS Studio and enter the URL above, then connect here.
+            Start the server, then add an Ojowacam source in OBS Studio — it
+            discovers this phone automatically on the same network. The URL
+            above is a fallback for manual setup.
           </Text>
           <View style={styles.statusRow}>
             <View style={[styles.statusDot, (serverRunning || peerConnected) && styles.statusDotConnected]} />

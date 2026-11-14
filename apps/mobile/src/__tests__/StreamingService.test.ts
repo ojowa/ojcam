@@ -33,6 +33,7 @@ beforeEach(() => {
     send: jest.fn().mockReturnValue(true),
     sendReliable: jest.fn().mockResolvedValue(true),
     isConnected: jest.fn().mockReturnValue(false),
+    isListening: jest.fn().mockReturnValue(false),
     getState: jest.fn().mockReturnValue({ connected: false, reconnecting: false, attemptCount: 0, queuedMessages: 0 }),
   };
 });
