@@ -100,6 +100,7 @@ set(PLUGIN_SOURCES
     shared/src/device-manager.cpp
     shared/src/stream-receiver.cpp
     shared/src/frame-converter.cpp
+    shared/src/shared-session.cpp
 )
 
 add_library(ojowacam-obs MODULE ${PLUGIN_SOURCES})

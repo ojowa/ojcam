@@ -1,11 +1,12 @@
 #include "audio-source.h"
 #include "stream-receiver.h"
+#include "shared-session.h"
 #include <string>
 
 struct OjowacamAudioData {
     obs_source_t *source;
     float sample_rate;
-    ojowacam::StreamReceiver* stream_receiver = nullptr;
+    std::shared_ptr<ojowacam::StreamReceiver> stream_receiver;
 };
 
 obs_source_info ojowacam_audio_source_info = [] {
@@ -18,8 +19,8 @@ obs_source_info ojowacam_audio_source_info = [] {
     info.destroy = [](void *data) {
         auto *d = static_cast<OjowacamAudioData *>(data);
         if (d->stream_receiver) {
-            d->stream_receiver->disconnect();
-            delete d->stream_receiver;
+            d->stream_receiver->setAudioSource(nullptr);
+            d->stream_receiver.reset();
         }
         delete d;
     };
@@ -40,8 +41,11 @@ void *ojowacam_audio_create(obs_data_t *settings, obs_source_t *source)
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
 
     if (!resolved_signaling_url.empty()) {
-        data->stream_receiver = new ojowacam::StreamReceiver(nullptr, source);
-        data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
+        data->stream_receiver = ojowacam::SharedSession::acquire(
+            resolved_device_id, resolved_signaling_url);
+        if (data->stream_receiver) {
+            data->stream_receiver->setAudioSource(source);
+        }
     }
 
     return data;
@@ -56,8 +60,10 @@ obs_properties_t *ojowacam_audio_properties(void *data)
     obs_properties_add_text(props, "signaling_url", "Signaling URL (ws://phone-ip:8765)", OBS_TEXT_DEFAULT);
     obs_properties_add_button(props, "connect", "Connect to Device", [](obs_properties_t*, obs_property_t*, void* data) {
         auto *d = static_cast<OjowacamAudioData*>(data);
+
         if (d->stream_receiver) {
-            d->stream_receiver->disconnect();
+            d->stream_receiver->setAudioSource(nullptr);
+            d->stream_receiver.reset();
         }
 
         obs_data_t *settings = obs_source_get_settings(d->source);
@@ -68,10 +74,11 @@ obs_properties_t *ojowacam_audio_properties(void *data)
         std::string resolved_signaling_url = signaling_url ? signaling_url : "";
 
         if (!resolved_signaling_url.empty()) {
-            if (!d->stream_receiver) {
-                d->stream_receiver = new ojowacam::StreamReceiver(nullptr, d->source);
+            d->stream_receiver = ojowacam::SharedSession::acquire(
+                resolved_device_id, resolved_signaling_url);
+            if (d->stream_receiver) {
+                d->stream_receiver->setAudioSource(d->source);
             }
-            d->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
         }
         obs_data_release(settings);
         return true;

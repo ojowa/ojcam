@@ -1,5 +1,6 @@
 #include "video-source.h"
 #include "stream-receiver.h"
+#include "shared-session.h"
 #include "frame-converter.h"
 #include "device-manager.h"
 #include <algorithm>
@@ -8,7 +9,7 @@ struct OjowacamVideoData {
     obs_source_t *source;
     uint32_t width;
     uint32_t height;
-    ojowacam::StreamReceiver* stream_receiver = nullptr;
+    std::shared_ptr<ojowacam::StreamReceiver> stream_receiver;
     ojowacam::FrameConverter* frame_converter = nullptr;
     gs_texture_t* current_texture = nullptr;
     bool connected = false;
@@ -45,13 +46,16 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
 
     if (!resolved_signaling_url.empty()) {
-        data->stream_receiver = new ojowacam::StreamReceiver(source, nullptr);
-        data->stream_receiver->onVideoSizeChanged = [data](uint32_t w, uint32_t h) {
-            data->width = w;
-            data->height = h;
-        };
-        data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
-        data->connected = data->stream_receiver->isConnected();
+        data->stream_receiver = ojowacam::SharedSession::acquire(
+            resolved_device_id, resolved_signaling_url);
+        if (data->stream_receiver) {
+            data->stream_receiver->setVideoSource(source);
+            data->stream_receiver->onVideoSizeChanged = [data](uint32_t w, uint32_t h) {
+                data->width = w;
+                data->height = h;
+            };
+            data->connected = data->stream_receiver->isConnected();
+        }
     }
 
     return data;
@@ -61,8 +65,9 @@ void ojowacam_video_destroy(void *data)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
     if (d->stream_receiver) {
-        d->stream_receiver->disconnect();
-        delete d->stream_receiver;
+        d->stream_receiver->setVideoSource(nullptr);
+        d->stream_receiver->onVideoSizeChanged = nullptr;
+        d->stream_receiver.reset();
     }
     if (d->frame_converter) {
         delete d->frame_converter;
@@ -101,20 +106,22 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
 
     if (d->stream_receiver) {
-        d->stream_receiver->disconnect();
-        delete d->stream_receiver;
-        d->stream_receiver = nullptr;
+        d->stream_receiver->setVideoSource(nullptr);
+        d->stream_receiver->onVideoSizeChanged = nullptr;
+        d->stream_receiver.reset();
     }
     d->connected = false;
 
     if (!resolved_signaling_url.empty()) {
-        d->stream_receiver = new ojowacam::StreamReceiver(d->source, nullptr);
-        d->stream_receiver->onVideoSizeChanged = [d](uint32_t w, uint32_t h) {
-            d->width = w;
-            d->height = h;
-        };
-        if (d->stream_receiver->connect(resolved_device_id, resolved_signaling_url)) {
-            d->connected = true;
+        d->stream_receiver = ojowacam::SharedSession::acquire(
+            resolved_device_id, resolved_signaling_url);
+        if (d->stream_receiver) {
+            d->stream_receiver->setVideoSource(d->source);
+            d->stream_receiver->onVideoSizeChanged = [d](uint32_t w, uint32_t h) {
+                d->width = w;
+                d->height = h;
+            };
+            d->connected = d->stream_receiver->isConnected();
         }
     }
 }
