@@ -54,7 +54,7 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
 
     if (!resolved_signaling_url.empty() || auto_discover) {
         data->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url, auto_discover);
+            resolved_device_id, resolved_signaling_url, auto_discover, "video");
         if (data->stream_receiver) {
             data->stream_receiver->setVideoSource(source);
             data->stream_receiver->onVideoSizeChanged = [data](uint32_t w, uint32_t h) {
@@ -122,7 +122,7 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
 
     if (!resolved_signaling_url.empty() || auto_discover) {
         d->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url, auto_discover);
+            resolved_device_id, resolved_signaling_url, auto_discover, "video");
         if (d->stream_receiver) {
             d->stream_receiver->setVideoSource(d->source);
             d->stream_receiver->onVideoSizeChanged = [d](uint32_t w, uint32_t h) {

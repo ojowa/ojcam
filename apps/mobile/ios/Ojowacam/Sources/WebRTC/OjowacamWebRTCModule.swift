@@ -77,15 +77,19 @@ class OjowacamWebRTCModule: RCTEventEmitter {
         resolve(true)
     }
     @objc
-    func createOffer(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    func createOffer(_ iceRestart: Bool, resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
         guard let pc = peerConnection else {
             reject("WEBRTC_NO_PC", "No peer connection", nil)
             return
         }
 
+        // IceRestart gives the peer a fresh ICE generation so it can start a
+        // new media session (needed after OBS restarts or re-creates its
+        // PeerConnection).
         let constraints = RTCMediaConstraints(mandatoryConstraints: [
             "OfferToReceiveAudio": "true",
-            "OfferToReceiveVideo": "false"
+            "OfferToReceiveVideo": "false",
+            "IceRestart": iceRestart ? "true" : "false"
         ], optionalConstraints: nil)
 
         pc.offer(for: constraints) { [weak self] sdp, error in

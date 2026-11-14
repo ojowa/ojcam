@@ -554,13 +554,29 @@ void DeviceManager::SetDeviceCallback(DeviceCallback cb) {
     const bool clearing = !cb;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        device_cb_ = std::move(cb);
+        device_cbs_.clear();
+        if (cb) device_cbs_.push_back({next_cb_id_++, std::move(cb)});
     }
     if (clearing) {
         // Drain: block until any in-flight invocation finishes so the
-        // callback's target (the stream receiver) can be destroyed safely.
+        // callbacks' targets (the stream receivers) can be destroyed safely.
         std::lock_guard<std::mutex> drain(invoke_mutex_);
     }
+}
+
+uint64_t DeviceManager::AddDeviceCallback(DeviceCallback cb) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const uint64_t id = next_cb_id_++;
+    device_cbs_.push_back({id, std::move(cb)});
+    return id;
+}
+
+void DeviceManager::RemoveDeviceCallback(uint64_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    device_cbs_.erase(
+        std::remove_if(device_cbs_.begin(), device_cbs_.end(),
+                       [&](const CallbackEntry& e) { return e.id == id; }),
+        device_cbs_.end());
 }
 
 void DeviceManager::HandleDiscovered(const DiscoveredDevice &device) {
@@ -587,13 +603,18 @@ void DeviceManager::HandleDiscovered(const DiscoveredDevice &device) {
     // Fire for every beacon (listeners gate themselves, e.g. "already
     // connected"), never while holding mutex_, and under invoke_mutex_ with a
     // re-check so a concurrent clear can neither race the call nor be missed.
-    std::lock_guard<std::mutex> invoke(invoke_mutex_);
-    DeviceCallback cb;
+    std::vector<DeviceCallback> cbs;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        cb = device_cb_;
+        cbs.reserve(device_cbs_.size());
+        for (const auto& e : device_cbs_) cbs.push_back(e.cb);
     }
-    if (cb) cb(device);
+    {
+        std::lock_guard<std::mutex> invoke(invoke_mutex_);
+        for (const auto& cb : cbs) {
+            if (cb) cb(device);
+        }
+    }
 }
 
 void DeviceManager::StartDiscovery() {

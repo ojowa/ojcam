@@ -23,10 +23,13 @@ struct StreamReceiver::Impl {
     std::string device_id;
     std::string signaling_url;
     bool auto_discover = false;
-    // True while this receiver owns the DeviceManager discovery callback
-    // (cleared on disconnect/teardown so it cannot outlive the receiver).
-    bool owns_device_cb = false;
+    std::string purpose = "video";
+    uint64_t device_cb_id_ = 0;
     std::atomic<bool> connected{false};
+    // True while a signaling dial is in flight (initial dial, reconnect
+    // worker or beacon-driven retry): prevents overlapping dials that would
+    // replace each other's signaling client.
+    std::atomic<bool> dialing{false};
 
     // Auto-reconnect state (single-flight worker)
     std::mutex reconnect_mutex_;
@@ -59,12 +62,17 @@ struct StreamReceiver::Impl {
     }
 };
 
-StreamReceiver::StreamReceiver(obs_source_t* video_source, obs_source_t* audio_source)
+StreamReceiver::StreamReceiver(obs_source_t* video_source, obs_source_t* audio_source,
+                               const std::string& purpose)
     : impl_(new Impl()) {
     impl_->video_source = video_source;
     impl_->audio_source = audio_source;
+    impl_->purpose = purpose;
+    blog(LOG_INFO, "[Ojowacam] StreamReceiver created: purpose=%s",
+         purpose.c_str());
 
     impl_->transport = std::make_unique<WebRTCTransport>();
+    impl_->transport->setRequestsWirelessMic(impl_->purpose == "mic");
     // Prefer the FFmpeg-backed decoder (OJO_FFMPEG_ENABLED); fall back to the
     // NAL-parsing stub, which cannot produce pixels and drops frames.
     impl_->video_decoder = HardwareVideoDecoder::Create("H264");
@@ -211,6 +219,14 @@ void StreamReceiver::reconnectWorker(std::string device_id, std::string signalin
             return;
         }
 
+        // In auto-discover mode connect() only opens the listener: the
+        // beacon-driven callback performs the real dial when the phone
+        // appears, so there is nothing for this worker to retry here.
+        if (impl_->auto_discover && ok) {
+            finishReconnectWorker();
+            return;
+        }
+
         const int next =
             impl_->reconnect_attempts_.fetch_add(1, std::memory_order_relaxed) + 1;
         if (next > Impl::kMaxReconnectAttempts) {
@@ -261,6 +277,35 @@ bool StreamReceiver::connect(const std::string& device_id,
     impl_->signaling_url = signaling_url;
     impl_->auto_discover = auto_discover;
     impl_->transport->setConnectionOptions(auto_discover);
+    blog(LOG_INFO, "[Ojowacam] Receiver connecting: purpose=%s url=%s auto_discover=%d",
+         impl_->purpose.c_str(), signaling_url.c_str(), auto_discover ? 1 : 0);
+
+    // Register the discovery callback once per receiver: every receiver dials
+    // the phone independently when a beacon arrives (video and Wireless
+    // Microphone each open their own signaling connection).
+    if (auto_discover && !impl_->device_cb_id_) {
+        auto* dm = DeviceManager::GetInstance();
+        impl_->device_cb_id_ = dm->AddDeviceCallback([this](const DiscoveredDevice& dev) {
+            if (!impl_ || !impl_->transport) return;
+            if (impl_->transport->isConnected()) return;
+            const std::string target =
+                "ws://" + dev.ip_address + ":" + std::to_string(dev.port);
+            blog(LOG_INFO, "[Ojowacam] Same-network discovery: dialing %s (purpose=%s)",
+                 target.c_str(), impl_->purpose.c_str());
+            connect(dev.device_id, target, true);
+        });
+        dm->StartDiscovery(); // idempotent (module load also starts it)
+    }
+
+    // One dial at a time: a second caller (beacon retry while the first dial
+    // is still running) must not replace the live signaling client.
+    if (impl_->dialing.exchange(true)) {
+        return impl_->transport->isConnected();
+    }
+    struct DialGuard {
+        std::atomic<bool>& flag;
+        ~DialGuard() { flag.store(false, std::memory_order_release); }
+    } dial_guard{impl_->dialing};
 
     // Initialize decoders based on expected stream config
     if (!impl_->video_decoder->isInitialized()) {
@@ -271,27 +316,11 @@ bool StreamReceiver::connect(const std::string& device_id,
     }
 
     if (!impl_->transport->connect(signaling_url)) {
-        blog(LOG_ERROR, "[Ojowacam] WebRTC transport connect failed for device %s",
-             device_id.c_str());
+        blog(LOG_ERROR,
+             "[Ojowacam] WebRTC transport connect failed for device %s (purpose=%s)",
+             device_id.c_str(), impl_->purpose.c_str());
         scheduleReconnect();
         return false;
-    }
-
-    // Same-network discovery: dial the phone whenever a beacon reports its
-    // current address (covers empty or stale manual URLs and IP changes).
-    // The callback gates on isConnected so a live session stays silent.
-    if (auto_discover) {
-        auto* dm = DeviceManager::GetInstance();
-        dm->SetDeviceCallback([this](const DiscoveredDevice& dev) {
-            if (!impl_ || !impl_->transport) return;
-            if (impl_->transport->isConnected()) return;
-            const std::string target =
-                "ws://" + dev.ip_address + ":" + std::to_string(dev.port);
-            blog(LOG_INFO, "[Ojowacam] Same-network discovery: dialing %s", target.c_str());
-            impl_->transport->connect(target);
-        });
-        impl_->owns_device_cb = true;
-        dm->StartDiscovery(); // idempotent (module load also starts it)
     }
 
     // The phone is the offerer; OBS answers when its OFFER arrives.
@@ -373,11 +402,11 @@ void StreamReceiver::disconnect() {
     // transport (its disconnect callback would otherwise schedule a retry).
     cancelReconnectAndWait();
 
-    // Drop the discovery callback first so a late beacon cannot dial through
-    // a receiver that is tearing down.
-    if (impl_->owns_device_cb) {
-        DeviceManager::GetInstance()->SetDeviceCallback(nullptr);
-        impl_->owns_device_cb = false;
+    // Drop this receiver's discovery callback so a late beacon cannot dial
+    // through a receiver that is tearing down (other receivers keep theirs).
+    if (impl_->device_cb_id_) {
+        DeviceManager::GetInstance()->RemoveDeviceCallback(impl_->device_cb_id_);
+        impl_->device_cb_id_ = 0;
     }
 
     impl_->transport->disconnect();

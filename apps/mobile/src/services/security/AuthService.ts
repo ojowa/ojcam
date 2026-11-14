@@ -1,6 +1,6 @@
 import { deviceIdentity } from './DeviceIdentity';
 
-const SESSION_BOUND_TYPES = ['OFFER', 'ANSWER', 'ICE_CANDIDATE', 'START_SESSION'];
+const SESSION_BOUND_TYPES = ['OFFER', 'ANSWER', 'ICE_CANDIDATE', 'START_SESSION', 'MIC_REQUEST'];
 
 export interface SessionInfo {
   token: string;

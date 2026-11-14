@@ -189,9 +189,14 @@ export class WebRTCService {
     return OjowacamWebRTC.createPeerConnection(urls);
   }
 
-  static async createOffer(): Promise<boolean> {
+  /**
+   * Create an offer. iceRestart asks for a fresh ICE generation so the peer
+   * can start a new media session (used when the peer reconnects/recreates
+   * its PeerConnection).
+   */
+  static async createOffer(iceRestart = false): Promise<boolean> {
     this.bindNativeEvents();
-    return OjowacamWebRTC.createOffer();
+    return OjowacamWebRTC.createOffer(iceRestart);
   }
 
   static async setRemoteDescription(type: string, sdp: string): Promise<boolean> {

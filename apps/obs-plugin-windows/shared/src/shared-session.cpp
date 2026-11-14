@@ -19,7 +19,8 @@ std::map<std::string, std::weak_ptr<StreamReceiver>>& SharedSession::sessions() 
 
 std::shared_ptr<StreamReceiver> SharedSession::acquire(const std::string& device_id,
                                                        const std::string& signaling_url,
-                                                       bool auto_discover) {
+                                                       bool auto_discover,
+                                                       const std::string& purpose) {
     if (signaling_url.empty() && !auto_discover) return nullptr;
 
     std::lock_guard<std::mutex> lock(mutex());
@@ -34,10 +35,12 @@ std::shared_ptr<StreamReceiver> SharedSession::acquire(const std::string& device
         }
     }
 
-    // One phone on one network: manual URLs key on the URL, discovery
-    // sessions key on the device so video + microphone still share.
+    // Independent streams get independent receivers: the camera video source
+    // and the Wireless Microphone source each own a signaling connection.
+    // Sources of the same purpose share one receiver.
+    const std::string purpose_key = purpose.empty() ? "video" : purpose;
     const std::string key =
-        signaling_url.empty() ? ("auto:" + device_id) : signaling_url;
+        auto_discover ? ("auto:" + purpose_key) : (signaling_url + "#" + purpose_key);
 
     auto it = registry.find(key);
     if (it != registry.end()) {
@@ -46,7 +49,8 @@ std::shared_ptr<StreamReceiver> SharedSession::acquire(const std::string& device
         }
     }
 
-    auto receiver = std::shared_ptr<StreamReceiver>(new StreamReceiver(nullptr, nullptr));
+    auto receiver = std::shared_ptr<StreamReceiver>(
+        new StreamReceiver(nullptr, nullptr, purpose));
     receiver->connect(device_id, signaling_url, auto_discover);
     registry[key] = receiver;
     return receiver;

@@ -152,6 +152,18 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     Log.d(TAG, "Camera capture session configured")
+                    // Start producing frames: without a repeating capture request
+                    // the ImageReader never gets frames and onImageAvailable never fires.
+                    try {
+                        val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                        builder.addTarget(imageReader!!.surface)
+                        builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                        builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                        captureSession!!.setRepeatingRequest(builder.build(), null, null)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start repeating capture request", e)
+                        isStreaming = false
+                    }
                 }
                 override fun onConfigureFailed(session: CameraCaptureSession) {
                     Log.e(TAG, "Camera capture session configuration failed")

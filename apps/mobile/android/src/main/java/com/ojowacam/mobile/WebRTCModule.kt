@@ -25,6 +25,7 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     private var videoSink: VideoSink? = null
     private var frameWidth = 0
     private var frameHeight = 0
+    private var frameCounter = 0L
 
     override fun getName(): String = "OjowacamWebRTC"
 
@@ -192,6 +193,10 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             } finally {
                 frame.release()
             }
+            frameCounter++
+            if (frameCounter == 1L || frameCounter % 120L == 0L) {
+                Log.d(TAG, "Pushed video frames to the WebRTC track: $frameCounter (${width}x$height)")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to deliver video frame", e)
         }
@@ -207,12 +212,18 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     }
 
     @ReactMethod
-    fun createOffer(promise: Promise) {
+    fun createOffer(iceRestart: Boolean, promise: Promise) {
         try {
             val pc = peerConnection ?: throw Exception("No peer connection")
             val sdpConstraints = MediaConstraints()
             sdpConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
             sdpConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "false"))
+            if (iceRestart) {
+                // A new ICE generation lets the peer (OBS) start a fresh
+                // media session after it restarted or re-created its
+                // PeerConnection, instead of keeping stale ICE credentials.
+                sdpConstraints.mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+            }
             pc.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(sessionDescription: SessionDescription) {
                     pc.setLocalDescription(object : SdpObserver {

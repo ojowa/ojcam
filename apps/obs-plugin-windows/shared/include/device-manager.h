@@ -29,13 +29,16 @@ public:
     void AddDevice(const DiscoveredDevice &device);
     void RemoveDevice(const std::string &device_id);
 
-    // Set a callback that fires whenever a phone beacon arrives. Clearing it
-    // (nullptr) waits for any in-flight invocation, so the caller may safely
-    // tear down whatever the callback captured afterwards.
+    // Set the single discovery callback (replaces all; nullptr clears all and
+    // drains in-flight invocations). Prefer AddDeviceCallback/RemoveDeviceCallback
+    // when several listeners (e.g. video + Wireless Microphone receivers) each
+    // need to react to beacons.
     void SetDeviceCallback(DeviceCallback cb);
+    uint64_t AddDeviceCallback(DeviceCallback cb);
+    void RemoveDeviceCallback(uint64_t id);
 
     // Backend entry point: records a device (latest entry for a phone wins,
-    // so IP changes replace stale addresses) and fires the device callback.
+    // so IP changes replace stale addresses) and fires the device callbacks.
     void HandleDiscovered(const DiscoveredDevice &device);
 
     // Start/stop discovery (UDP beacons always; mDNS additionally where the
@@ -51,8 +54,10 @@ private:
 
     std::vector<DiscoveredDevice> devices_;
     mutable std::mutex mutex_;
-    DeviceCallback device_cb_;
-    // Held while a callback runs; cleared callbacks wait on it (drain) so a
+    struct CallbackEntry { uint64_t id; DeviceCallback cb; };
+    std::vector<CallbackEntry> device_cbs_;
+    uint64_t next_cb_id_ = 0;
+    // Held while callbacks run; clearing callbacks waits on it (drain) so a
     // listener can be destroyed without an in-flight call racing its death.
     mutable std::mutex invoke_mutex_;
 

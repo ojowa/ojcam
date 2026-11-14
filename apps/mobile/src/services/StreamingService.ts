@@ -75,6 +75,10 @@ export class StreamingService {
   /** Wireless Mic state: capture running + mute flag (mute sends nothing). */
   private audioBroadcasting = false;
   private audioMuted = false;
+  /** Camera/config of the last manual start, reused by auto-start. */
+  private lastCameraId: string | null = null;
+  private lastStreamConfig: StreamConfig | null = null;
+  private autoStartInFlight = false;
 
   constructor(config: StreamingConfig = defaultStreamingConfig) {
     this.config = config;
@@ -83,12 +87,27 @@ export class StreamingService {
         this.state.isConnected = true;
         this.state.error = null;
         this.notifyStateChange();
+        if (this.isStreaming) {
+          // A new peer (OBS) attached while we are already streaming: re-offer
+          // with an ICE restart so the new peer starts a fresh media session
+          // instead of keeping stale ICE credentials.
+          void WebRTCService.createOffer(true).catch((error) => {
+            console.warn('Failed to re-offer to the new peer:', error);
+          });
+        } else {
+          // Nothing is streaming yet: start the video session automatically so
+          // the picture appears in OBS as soon as the peer connects.
+          void this.autoStartStreaming();
+        }
       },
       onDisconnected: () => {
         this.state.isConnected = false;
         this.state.isAuthenticated = false;
-        if (this.isStreaming) { void this.stopStreaming(); }
-        if (this.audioBroadcasting) { void this.stopAudioBroadcast(); }
+        // The media session (camera + peer connection) intentionally stays
+        // alive: the signaling link can drop and be re-established (OBS
+        // re-dials, the phone restarts its socket) while the WebRTC session
+        // is still valid. A new peer triggers a re-offer with an ICE restart
+        // (see onConnected). Explicit stops go through disconnectSignaling().
         this.notifyStateChange();
       },
       onReconnecting: (attempt) => {
@@ -111,6 +130,13 @@ export class StreamingService {
         this.state.error = err.message;
         this.notifyStateChange();
       },
+    });
+    // OBS' Wireless Microphone source asks for the mic stream on its own
+    // connection: start the capture so the source gets real audio.
+    signalingService.setMicRequestHandler(() => {
+      void this.startAudioBroadcast().catch(error => {
+        console.warn('Wireless Mic request failed:', error);
+      });
     });
   }
 
@@ -188,6 +214,9 @@ export class StreamingService {
   }
 
   async disconnectSignaling(): Promise<void> {
+    // Explicit user action: stop the media session as well.
+    if (this.isStreaming) await this.stopStreaming();
+    if (this.audioBroadcasting) await this.stopAudioBroadcast();
     signalingService.disconnect();
     this.state.isConnected = false;
     this.state.isAuthenticated = false;
@@ -248,11 +277,6 @@ export class StreamingService {
 
   async startStreaming(cameraId: string, config: StreamConfig): Promise<boolean> {
     if (this.isStreaming) { console.warn('Already streaming'); return false; }
-    if (this.audioBroadcasting) {
-      this.state.error = 'Stop the Wireless Mic broadcast before starting the camera stream.';
-      this.notifyStateChange();
-      return false;
-    }
     try {
       this.state.error = null;
       await connectionConfig.load();
@@ -286,6 +310,8 @@ export class StreamingService {
       }
       this.streamConfig = config;
       this.currentCameraId = cameraId;
+      this.lastCameraId = cameraId;
+      this.lastStreamConfig = config;
       this.streamResourcesStarted = true;
       console.log('[stream] step: permissions');
       // The camera may negotiate a different size than requested (e.g. 4K not
@@ -322,7 +348,9 @@ export class StreamingService {
         await WebRTCService.addAudioTrack('ojowacam-audio');
       }
       console.log('[stream] step: createOffer');
-      await WebRTCService.createOffer();
+      // iceRestart: the peer may have re-created its PeerConnection since the
+      // last session - a fresh ICE generation keeps both sides in sync.
+      await WebRTCService.createOffer(true);
       console.log('[stream] step: sendStartSession');
       const videoConfig: VideoConfig = {
         resolution: `${outWidth}x${outHeight}`, fps: config.fps, codec: config.codec, bitrate: config.bitrate,
@@ -357,6 +385,40 @@ export class StreamingService {
     }
   }
 
+  /**
+   * Start streaming as soon as a peer connects: reuse the camera and quality
+   * of the last manual start, otherwise fall back to the first available
+   * camera at 720p30.
+   */
+  private async autoStartStreaming(): Promise<void> {
+    if (this.autoStartInFlight || this.isStreaming || this.streamResourcesStarted) return;
+    this.autoStartInFlight = true;
+    try {
+      // Give the pairing handshake a moment to complete so the session
+      // message carries a valid session token.
+      const deadline = Date.now() + 4000;
+      while (!authService.isAuthenticated() && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      let cameraId = this.lastCameraId;
+      if (!cameraId) {
+        const cameras = await CameraService.getAvailableCameras();
+        cameraId = cameras && cameras.length > 0 ? cameras[0].id : 'camera-0';
+      }
+      const config: StreamConfig = this.lastStreamConfig ?? {
+        resolution: '1280x720',
+        fps: 30,
+        bitrate: 4000000,
+        codec: 'H264',
+      };
+      await this.startStreaming(cameraId, config);
+    } catch (error) {
+      console.warn('Auto-start of the video session failed:', error);
+    } finally {
+      this.autoStartInFlight = false;
+    }
+  }
+
   async stopStreaming(): Promise<boolean> {
     if (!this.isStreaming && !this.streamResourcesStarted) return true;
     const results = await Promise.allSettled([
@@ -387,9 +449,6 @@ export class StreamingService {
         // The PCM-over-WebSocket capture path (s16le 48k stereo emission) is
         // implemented natively on Android; fail honestly elsewhere.
         throw new Error('The Wireless Mic broadcast is currently Android-only.');
-      }
-      if (this.isStreaming) {
-        throw new Error('Stop the camera stream before starting the Wireless Mic.');
       }
       await connectionConfig.load();
       this.config.signalingUrl = connectionConfig.getSignalingUrl();

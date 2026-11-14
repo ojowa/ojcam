@@ -1,5 +1,16 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, PermissionsAndroid, Platform, useWindowDimensions, SafeAreaView } from 'react-native';
+import {
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+  ActivityIndicator,
+  PermissionsAndroid,
+  Platform,
+  useWindowDimensions,
+  SafeAreaView,
+  PanResponder,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Camera, CameraType, FlashMode } from 'expo-camera';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -10,6 +21,10 @@ import { streamingService } from '../services/StreamingService';
 import { CameraDevice } from '../native/modules';
 import { streamSettings } from '../services/config/StreamSettings';
 import { connectionConfig } from '../services/config/ConnectionConfig';
+
+export type ZoomLevel = 1 | 2 | 3;
+export type FocusMode = 'continuousAutoFocus' | 'locked' | 'autoFocus';
+export type WhiteBalance = 'auto' | 'daylight' | 'cloudy' | 'tungsten' | 'fluorescent';
 
 /** Request Android runtime camera + microphone permissions. Returns true if granted (or non-Android). */
 export async function ensureCapturePermissions(): Promise<boolean> {
@@ -46,6 +61,19 @@ export default function CameraScreen() {
   const [obsTarget, setObsTarget] = React.useState('');
   const cameraRef = React.useRef<Camera>(null);
   const startingRef = React.useRef(false);
+
+  // Digital camera controls
+  const [zoomLevel, setZoomLevel] = React.useState<ZoomLevel>(1);
+  const [focusMode, setFocusMode] = React.useState<FocusMode>('continuousAutoFocus');
+  const [whiteBalance, setWhiteBalance] = React.useState<WhiteBalance>('auto');
+  const [gridOverlay, setGridOverlay] = React.useState(false);
+  const [timerActive, setTimerActive] = React.useState(false);
+  const [timerSeconds, setTimerSeconds] = React.useState(3);
+  const [focusPoint, setFocusPoint] = React.useState<{ x: number; y: number } | null>(null);
+  const [isPinchZooming, setIsPinchZooming] = React.useState(false);
+  const [pinchStartZoom, setPinchStartZoom] = React.useState<ZoomLevel>(1);
+  const [isCapturing, setIsCapturing] = React.useState(false);
+
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
@@ -72,6 +100,100 @@ export default function CameraScreen() {
       }
     } catch (error) {
       console.warn('Unable to change orientation:', error);
+    }
+  };
+
+  // Digital camera: apply focus mode when it changes.
+  React.useEffect(() => {
+    if (!nativeCapture && !isStreaming) return;
+    void CameraService.setFocusMode(focusMode).catch(() => undefined);
+  }, [focusMode, nativeCapture, isStreaming]);
+
+  // Digital camera: pinch-to-zoom responder for the preview.
+  const panResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (_, gestureState) => {
+          setIsPinchZooming(true);
+          setPinchStartZoom(zoomLevel);
+          if (focusPoint) setFocusPoint(null);
+        },
+        onPanResponderMove: (_, gestureState) => {
+          // Vertical drag: cycle zoom levels 1 → 2 → 3 → 1
+          if (Math.abs(gestureState.dy) > 40 && !isPinchZooming) {
+            const next = (zoomLevel % 3) + 1 as ZoomLevel;
+            setZoomLevel(next);
+          }
+        },
+        onPanResponderRelease: () => {
+          setIsPinchZooming(false);
+        },
+        onPanResponderTerminate: () => {
+          setIsPinchZooming(false);
+        },
+      }),
+    [zoomLevel, isPinchZooming]
+  );
+
+  // Tap to focus / expose on the preview.
+  const handlePreviewPress = (event: { nativeEvent: { locationX: number; locationY: number } }) => {
+    const { locationX, locationY } = event.nativeEvent;
+    setFocusPoint({ x: locationX, y: locationY });
+    // Auto-focus on tap (only meaningful when not streaming/native capture).
+    if (!nativeCapture && !isStreaming) {
+      void CameraService.setFocusMode('autoFocus').catch(() => undefined);
+      setTimeout(() => void CameraService.setFocusMode(focusMode).catch(() => undefined), 1500);
+    }
+  };
+
+  const toggleStreaming = async () => {
+    if (nativeCapture || isStreaming) {
+      startingRef.current = false;
+      await streamingService.stopStreaming();
+      setIsStreaming(false);
+      setNativeCapture(false);
+      setPreviewReady(false);
+      return;
+    }
+    // Ensure runtime camera/mic grants before native capture opens the camera.
+    const granted = await ensureCapturePermissions();
+    if (!granted) {
+      setStreamError('Camera and microphone permissions are required to stream.');
+      return;
+    }
+    setPermission(true);
+    // Free the camera for the native capture module before streaming starts.
+    setPreviewReady(false);
+    setNativeCapture(true);
+    startingRef.current = true;
+    try {
+      await streamSettings.load();
+      // Uses ConnectionConfig signaling URL — never hardcode localhost.
+      const success = await streamingService.startStreaming(
+        selectedCamera,
+        {
+          resolution: streamSettings.getResolution(),
+          fps: streamSettings.getFps(),
+          bitrate: streamSettings.getBitrate(),
+          codec: 'H264',
+          audio: streamSettings.isAudioEnabled(),
+        },
+      );
+      if (success) {
+        setIsStreaming(true);
+        // Native focus mode only takes effect once capture owns the camera.
+        void CameraService.setFocusMode(streamSettings.isAutoFocus() ? 'continuousAutoFocus' : 'locked');
+      } else {
+        setNativeCapture(false);
+        setIsStreaming(false);
+      }
+    } catch {
+      setNativeCapture(false);
+      setIsStreaming(false);
+    } finally {
+      startingRef.current = false;
     }
   };
 
@@ -134,59 +256,53 @@ export default function CameraScreen() {
     }, [refreshSettingsDisplay]),
   );
 
-  const toggleStreaming = async () => {
-    if (nativeCapture || isStreaming) {
-      startingRef.current = false;
-      await streamingService.stopStreaming();
-      setIsStreaming(false);
-      setNativeCapture(false);
-      setPreviewReady(false);
-      return;
-    }
-    // Ensure runtime camera/mic grants before native capture opens the camera.
-    const granted = await ensureCapturePermissions();
-    if (!granted) {
-      setStreamError('Camera and microphone permissions are required to stream.');
-      return;
-    }
-    setPermission(true);
-    // Free the camera for the native capture module before streaming starts.
-    setPreviewReady(false);
-    setNativeCapture(true);
-    startingRef.current = true;
-    try {
-      await streamSettings.load();
-      // Uses ConnectionConfig signaling URL — never hardcode localhost.
-      const success = await streamingService.startStreaming(
-        selectedCamera,
-        {
-          resolution: streamSettings.getResolution(),
-          fps: streamSettings.getFps(),
-          bitrate: streamSettings.getBitrate(),
-          codec: 'H264',
-          audio: streamSettings.isAudioEnabled(),
-        },
-      );
-      if (success) {
-        setIsStreaming(true);
-        // Native focus mode only takes effect once capture owns the camera.
-        void CameraService.setFocusMode(streamSettings.isAutoFocus() ? 'continuousAutoFocus' : 'locked');
-      } else {
-        setNativeCapture(false);
-        setIsStreaming(false);
-      }
-    } catch {
-      setNativeCapture(false);
-      setIsStreaming(false);
-    } finally {
-      startingRef.current = false;
-    }
-  };
-
   const toggleFacing = () => {
     setFacing((prev) => (prev === 'back' ? 'front' : 'back'));
     const next = cameras.find((c) => c.facing === (facing === 'back' ? 'front' : 'back'));
     if (next) setSelectedCamera(next.id);
+  };
+
+  const handleZoomChange = (level: ZoomLevel) => {
+    setZoomLevel(level);
+    setIsPinchZooming(false);
+  };
+
+  const handleFocusModeChange = (mode: FocusMode) => {
+    setFocusMode(mode);
+    void CameraService.setFocusMode(mode).catch(() => undefined);
+  };
+
+  const handleWhiteBalanceChange = (wb: WhiteBalance) => {
+    setWhiteBalance(wb);
+  };
+
+  const toggleGrid = () => {
+    setGridOverlay(!gridOverlay);
+  };
+
+  const startTimer = () => {
+    if (timerActive) return;
+    setTimerActive(true);
+    setTimerSeconds(3);
+    const interval = setInterval(() => {
+      setTimerSeconds((s) => {
+        if (s <= 1) {
+          clearInterval(interval);
+          setTimerActive(false);
+          setFocusPoint(null);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  };
+
+  const handleShutterPress = async () => {
+    if (isCapturing || nativeCapture || isStreaming) return;
+    setIsCapturing(true);
+    setFocusPoint(null);
+    // Brief shutter flash animation
+    setTimeout(() => setIsCapturing(false), 300);
   };
 
   React.useEffect(() => {
@@ -224,10 +340,14 @@ export default function CameraScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.preview}>
+      {/* Camera preview with digital overlays */}
+      <View style={styles.preview} {...panResponder.panHandlers}>
         {nativeCapture ? (
           // Native CameraModule owns the camera while streaming; preview would conflict.
-          <Text style={styles.previewText}>Streaming live feed…</Text>
+          <View style={styles.streamingOverlay}>
+            <Text style={styles.streamingText}>LIVE FEED — Streaming to OBS</Text>
+            <Text style={styles.streamingSub}>{qualityLabel} @ {qualityFps}fps · {facing} camera</Text>
+          </View>
         ) : (
           <Camera
             ref={cameraRef}
@@ -244,6 +364,43 @@ export default function CameraScreen() {
             <Text style={styles.previewText}>Starting camera…</Text>
           </View>
         ) : null}
+
+        {/* Focus point indicator (tap to focus) */}
+        {focusPoint && !nativeCapture && !isStreaming && (
+          <View style={[styles.focusRing, { left: focusPoint.x - 30, top: focusPoint.y - 30 }]} />
+        )}
+
+        {/* Countdown timer overlay */}
+        {timerActive && timerSeconds > 0 && (
+          <View style={styles.timerOverlay}>
+            <Text style={styles.timerText}>{timerSeconds}</Text>
+          </View>
+        )}
+
+        {/* Grid overlay (rule of thirds) */}
+        {gridOverlay && !nativeCapture && (
+          <View style={styles.gridOverlay}>
+            <View style={[styles.gridLine, styles.gridLineTop]} />
+            <View style={[styles.gridLine, styles.gridLineBottom]} />
+            <View style={[styles.gridLineV, styles.gridLineVLeft]} />
+            <View style={[styles.gridLineV, styles.gridLineVRight]} />
+          </View>
+        )}
+
+        {/* Zoom indicator */}
+        {!nativeCapture && (
+          <View style={styles.zoomIndicator}>
+            <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(1)}>
+              <Text style={styles.zoomText}>1×</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(2)}>
+              <Text style={[styles.zoomText, zoomLevel === 2 && styles.zoomActive]}>2×</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(3)}>
+              <Text style={[styles.zoomText, zoomLevel === 3 && styles.zoomActive]}>3×</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       <SafeAreaView style={[styles.topBar, isLandscape && styles.topBarLandscape]} pointerEvents="box-none">
@@ -277,10 +434,34 @@ export default function CameraScreen() {
         </View>
       ) : null}
 
+      {/* Digital camera control bar */}
       <View style={[styles.bottomBar, isLandscape && styles.bottomBarLandscape]}>
         <TouchableOpacity style={styles.controlButton} onPress={() => setTorch(!torch)}>
           <Text style={styles.controlIcon}>{torch ? '⚡' : '🔌'}</Text>
           <Text style={styles.controlText}>Flash</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.controlButton} onPress={toggleGrid}>
+          <Text style={styles.controlIcon}>{gridOverlay ? '🟰' : '📐'}</Text>
+          <Text style={styles.controlText}>Grid</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.controlButton} onPress={startTimer}>
+          <Text style={styles.controlIcon}>⏱</Text>
+          <Text style={styles.controlText}>Timer</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.controlButton} onPress={toggleFacing}>
+          <Text style={styles.controlIcon}>🔄</Text>
+          <Text style={styles.controlText}>Flip</Text>
+        </TouchableOpacity>
+
+        {/* Shutter / photo capture button (prominent, centered) */}
+        <TouchableOpacity
+          style={[styles.shutterButton, isCapturing && styles.shutterCapturing]}
+          onPress={handleShutterPress}
+        >
+          <View style={styles.shutterRing} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -288,11 +469,6 @@ export default function CameraScreen() {
           onPress={() => void toggleStreaming()}
         >
           <Text style={styles.streamButtonText}>{isStreaming ? 'Stop Stream' : 'Go Live'}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.controlButton} onPress={toggleFacing}>
-          <Text style={styles.controlIcon}>🔄</Text>
-          <Text style={styles.controlText}>Flip</Text>
         </TouchableOpacity>
       </View>
 
@@ -531,6 +707,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
   },
+  shutterButton: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 8,
+  },
+  shutterCapturing: {
+    backgroundColor: '#eb5757',
+    transform: [{ scale: 0.92 }],
+  },
+  shutterRing: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 4,
+    borderColor: '#0a84ff',
+  },
   errorBanner: {
     position: 'absolute',
     left: 16,
@@ -550,5 +746,101 @@ const styles = StyleSheet.create({
     color: '#ffb4ae',
     fontSize: 13,
     textAlign: 'center',
+  },
+
+  /* --- Digital camera feature styles --- */
+  streamingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+  },
+  streamingText: {
+    color: '#eb5757',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  streamingSub: {
+    color: '#c9d1d9',
+    fontSize: 13,
+    marginTop: 6,
+  },
+  focusRing: {
+    position: 'absolute',
+    width: 60,
+    height: 60,
+    borderWidth: 2,
+    borderColor: '#0a84ff',
+    borderRadius: 30,
+  },
+  timerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 20,
+  },
+  timerText: {
+    color: '#fff',
+    fontSize: 72,
+    fontWeight: '800',
+  },
+  gridOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 15,
+  },
+  gridLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  gridLineTop: {
+    top: '33.33%',
+  },
+  gridLineBottom: {
+    bottom: '33.33%',
+  },
+  gridLineV: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  gridLineVLeft: {
+    left: '33.33%',
+  },
+  gridLineVRight: {
+    right: '33.33%',
+  },
+  zoomIndicator: {
+    position: 'absolute',
+    bottom: 140,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: 'rgba(15, 17, 23, 0.7)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    zIndex: 10,
+  },
+  zoomMinus: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  zoomText: {
+    color: '#c9d1d9',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  zoomActive: {
+    color: '#0a84ff',
   },
 });

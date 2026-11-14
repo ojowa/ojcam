@@ -464,15 +464,64 @@ private:
     AcceptHandler handler_;
 };
 
+// Process-wide plugin WebSocket server. Independent receivers (camera video,
+// Wireless Microphone) each need their own signaling connection, but only one
+// process may bind the plugin port: the server therefore lives here and hands
+// each inbound connection to the first transport that can take it.
+class PluginWsServer {
+public:
+    using Acceptor = std::function<bool(ojo_socket_t)>;
+
+    static PluginWsServer& instance() {
+        static PluginWsServer server;
+        return server;
+    }
+
+    void registerAcceptor(uint64_t id, Acceptor acceptor) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        acceptors_[id] = std::move(acceptor);
+        if (!started_) {
+            started_ = listener_.start(kPluginWsPort, [this](ojo_socket_t socket) {
+                this->onAccept(socket);
+            });
+        }
+    }
+
+    void unregisterAcceptor(uint64_t id) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        acceptors_.erase(id);
+    }
+
+private:
+    void onAccept(ojo_socket_t socket) {
+        std::map<uint64_t, Acceptor> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            snapshot = acceptors_;
+        }
+        for (auto& entry : snapshot) {
+            if (entry.second(socket)) return;
+        }
+        // No transport could take the connection: close it cleanly.
+        CLOSE_SOCKET(socket);
+    }
+
+    std::mutex mutex_;
+    WsListener listener_;
+    std::map<uint64_t, Acceptor> acceptors_;
+    bool started_ = false;
+};
+
 // Session-independent transport state: the plugin's WebSocket server and
 // connection options, destroyed before Impl so the accept thread cannot
 // reference a torn-down session.
 struct WebRTCTransport::Host {
-    WsListener listener;
     std::atomic<bool> auto_discover{false};
     // Serializes connect() (which may block in a dial) against inbound
     // accepts and session teardown.
     std::mutex state_mutex;
+    // Identity of this transport inside the shared plugin WebSocket server.
+    uint64_t ws_id = 0;
 };
 
 // ===========================================================================
@@ -540,6 +589,10 @@ struct WebRTCTransport::Impl {
     std::map<int, std::string> video_codec_by_pt;
     std::string negotiated_video_codec;
 
+    // When this transport carries the Wireless Microphone stream, it tells
+    // the phone (role=mic) and asks for the mic PCM broadcast once paired.
+    bool wireless_mic = false;
+
     // Opus audio decoding (guarded by audio_mutex)
     std::mutex audio_mutex;
 #ifdef OJO_OPUS_ENABLED
@@ -577,9 +630,16 @@ struct WebRTCTransport::Impl {
 
 #endif
 
-WebRTCTransport::WebRTCTransport() : impl_(new Impl()), host_(new Host()) {}
+WebRTCTransport::WebRTCTransport() : impl_(new Impl()), host_(new Host()) {
+    static std::atomic<uint64_t> next_id{0};
+    host_->ws_id = next_id.fetch_add(1) + 1;
+}
+
 WebRTCTransport::~WebRTCTransport() {
     disconnect();
+    // Leave the shared plugin WebSocket server before the transport dies: its
+    // accept thread may still call into this transport.
+    PluginWsServer::instance().unregisterAcceptor(host_->ws_id);
     // Stop the accept thread before impl_ goes away (its handler touches it).
     host_.reset();
     delete impl_;
@@ -588,6 +648,22 @@ WebRTCTransport::~WebRTCTransport() {
 void WebRTCTransport::setConnectionOptions(bool auto_discover) {
     host_->auto_discover.store(auto_discover, std::memory_order_release);
 }
+
+void WebRTCTransport::setRequestsWirelessMic(bool wireless_mic) {
+    impl_->wireless_mic = wireless_mic;
+}
+
+#if defined(OJO_LIBDATACHANNEL)
+void WebRTCTransport::declareRole() {
+    if (!impl_->signaling) return;
+    std::ostringstream msg;
+    msg << "{\"type\":\"ROLE\",\"role\":\"" << (impl_->wireless_mic ? "mic" : "video") << "\"}";
+    impl_->signaling->sendMessage(msg.str());
+    blog(LOG_INFO, "[Ojowacam] Declared role %s to the phone", impl_->wireless_mic ? "mic" : "video");
+}
+#else
+void WebRTCTransport::declareRole() {}
+#endif
 
 bool WebRTCTransport::connect(const std::string& url) {
     // Serializes against inbound accepts and other connect() callers
@@ -600,26 +676,12 @@ bool WebRTCTransport::connect(const std::string& url) {
     impl_->url = url;
 
 #if defined(OJO_LIBDATACHANNEL)
-    // A previous session's media state must not survive its signaling link:
-    // close any stale peer connection and opus decoder before reconnecting.
-    {
-        std::lock_guard<std::mutex> lock(impl_->pc_mutex);
-        if (impl_->peer_connection) {
-            impl_->peer_connection->close();
-            impl_->peer_connection = nullptr;
-        }
-    }
-    impl_->video_codec_by_pt.clear();
-    {
-        std::lock_guard<std::mutex> lock(impl_->audio_mutex);
-#ifdef OJO_OPUS_ENABLED
-        if (impl_->opus_decoder) {
-            opus_decoder_destroy(impl_->opus_decoder);
-            impl_->opus_decoder = nullptr;
-            impl_->opus_channels = 0;
-        }
-#endif
-    }
+    // The media session (PeerConnection + opus decoder) intentionally survives
+    // signaling reconnects: the phone may restart its socket while its DTLS
+    // association is still valid, and tearing the PeerConnection down here
+    // would silently kill a working video/audio stream. A fresh offer (from
+    // the phone, with an ICE restart) replaces the PeerConnection cleanly -
+    // see setRemoteDescription.
 #endif
 
     impl_->signaling = std::make_unique<SignalingClient>();
@@ -636,9 +698,10 @@ bool WebRTCTransport::connect(const std::string& url) {
     };
 
     // The plugin always hosts a WebSocket server so the phone can dial in
-    // ("both ends host") — idempotent across reconnects.
-    host_->listener.start(kPluginWsPort, [this](ojo_socket_t socket) {
-        this->onInboundSignaling(static_cast<uintptr_t>(socket));
+    // ("both ends host"). The server is process-wide: independent receivers
+    // (video, Wireless Microphone) share the single port.
+    PluginWsServer::instance().registerAcceptor(host_->ws_id, [this](ojo_socket_t socket) {
+        return this->tryAcceptInbound(static_cast<uintptr_t>(socket));
     });
 
     bool dialed = false;
@@ -653,6 +716,7 @@ bool WebRTCTransport::connect(const std::string& url) {
         // The phone is the offerer and speaks first (PAIRING_REQUEST/OFFER/
         // PING); OBS only answers. No join message is sent.
         markSessionActive("outbound dial");
+        declareRole();
         return true;
     }
 
@@ -673,26 +737,29 @@ bool WebRTCTransport::connect(const std::string& url) {
 }
 
 void WebRTCTransport::onInboundSignaling(uintptr_t socket_handle) {
+    tryAcceptInbound(socket_handle);
+}
+
+bool WebRTCTransport::tryAcceptInbound(uintptr_t socket_handle) {
     ojo_socket_t socket = static_cast<ojo_socket_t>(socket_handle);
     std::lock_guard<std::mutex> lock(host_->state_mutex);
 
     if (connected_ || (impl_->signaling && impl_->signaling->isActive())) {
         // First session wins: the plugin prefers its own outbound connection,
         // so a simultaneous dial from the phone is rejected cleanly.
-        CLOSE_SOCKET(socket);
-        return;
+        return false;
     }
     if (!impl_->signaling) {
         // connect() has not wired signaling yet; nothing can own this socket.
-        CLOSE_SOCKET(socket);
-        return;
+        return false;
     }
     if (!impl_->signaling->accept(socket)) {
-        CLOSE_SOCKET(socket);
-        return;
+        return false;
     }
     blog(LOG_INFO, "[Ojowacam] Signaling connection from the phone accepted");
     markSessionActive("inbound dial");
+    declareRole();
+    return true;
 }
 
 void WebRTCTransport::markSessionActive(const char* how) {
@@ -871,7 +938,19 @@ void WebRTCTransport::handlePairingRequest(const std::string& message) {
         << ",\"deviceId\":\"" << escapeJson(device_id) << "\""
         << ",\"sessionToken\":\"" << escapeJson(token) << "\"}";
     if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
-    blog(LOG_INFO, "[Ojowacam] Session established with device %s", device_id.c_str());
+    blog(LOG_INFO, "[Ojowacam] Session established with device %s (wireless_mic=%d)",
+         device_id.c_str(), impl_->wireless_mic ? 1 : 0);
+
+    if (impl_->wireless_mic && impl_->signaling) {
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
+        std::ostringstream mic_msg;
+        mic_msg << "{\"type\":\"MIC_REQUEST\",\"sessionToken\":\"" << escapeJson(token)
+                << "\",\"timestamp\":" << now_ms << "}";
+        impl_->signaling->sendMessage(mic_msg.str());
+        blog(LOG_INFO, "[Ojowacam] Requested the Wireless Microphone stream from the phone");
+    }
 }
 
 void WebRTCTransport::setRemoteDescription(const std::string& type, const std::string& sdp) {
@@ -1013,7 +1092,15 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
     {
         std::map<int, std::string> pt_map;
         const std::string codec = parseSdpVideoCodecs(sdp, pt_map);
-        if (!pt_map.empty()) impl_->video_codec_by_pt = std::move(pt_map);
+        if (!pt_map.empty()) {
+            impl_->video_codec_by_pt = std::move(pt_map);
+            std::string pt_list;
+            for (const auto& [pt, c] : impl_->video_codec_by_pt) {
+                if (!pt_list.empty()) pt_list += ", ";
+                pt_list += std::to_string(pt) + ":" + c;
+            }
+            blog(LOG_INFO, "[Ojowacam] Video PT map: %s", pt_list.c_str());
+        }
         if (!codec.empty()) {
             impl_->negotiated_video_codec = codec;
             if (onVideoCodecNegotiated) onVideoCodecNegotiated(codec);
@@ -1024,7 +1111,15 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
     std::shared_ptr<rtc::PeerConnection> pc;
     {
         std::lock_guard<std::mutex> lock(impl_->pc_mutex);
-        if (!impl_->peer_connection) {
+        // Every offer starts a fresh media session: the phone restarts ICE
+        // when it re-offers (e.g. after OBS restarted), so the answerer must
+        // present a matching, clean PeerConnection instead of reusing a stale
+        // DTLS association.
+        if (impl_->peer_connection) {
+            impl_->peer_connection->close();
+            impl_->peer_connection = nullptr;
+        }
+        {
             rtc::Configuration config;
             config.iceServers.emplace_back("stun:stun.l.google.com:19302");
 
@@ -1050,6 +1145,11 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
             });
 
             new_pc->onTrack([this](std::shared_ptr<rtc::Track> track) {
+                const auto track_desc = track->description();
+                const bool is_video =
+                    dynamic_cast<const rtc::Description::Video*>(&track_desc) != nullptr;
+                blog(LOG_INFO, "[Ojowacam] Media track received: %s (mid=%s)",
+                     is_video ? "video" : "audio", track->mid().c_str());
                 track->setMediaHandler(std::make_shared<rtc::RtcpReceivingSession>());
                 // Per-track depacketizer state: confined to this track's message
                 // thread, so no cross-thread synchronization is needed for it.
@@ -1060,6 +1160,33 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
                                           message.size(), depay);
                     },
                     nullptr);
+            });
+
+            new_pc->onStateChange([](rtc::PeerConnection::State state) {
+                const char* name = "unknown";
+                switch (state) {
+                    case rtc::PeerConnection::State::New: name = "new"; break;
+                    case rtc::PeerConnection::State::Connecting: name = "connecting"; break;
+                    case rtc::PeerConnection::State::Connected: name = "connected"; break;
+                    case rtc::PeerConnection::State::Disconnected: name = "disconnected"; break;
+                    case rtc::PeerConnection::State::Failed: name = "failed"; break;
+                    case rtc::PeerConnection::State::Closed: name = "closed"; break;
+                }
+                blog(LOG_INFO, "[Ojowacam] WebRTC connection state: %s", name);
+            });
+
+            new_pc->onIceStateChange([](rtc::PeerConnection::IceState state) {
+                const char* name = "unknown";
+                switch (state) {
+                    case rtc::PeerConnection::IceState::New: name = "new"; break;
+                    case rtc::PeerConnection::IceState::Checking: name = "checking"; break;
+                    case rtc::PeerConnection::IceState::Connected: name = "connected"; break;
+                    case rtc::PeerConnection::IceState::Completed: name = "completed"; break;
+                    case rtc::PeerConnection::IceState::Failed: name = "failed"; break;
+                    case rtc::PeerConnection::IceState::Disconnected: name = "disconnected"; break;
+                    case rtc::PeerConnection::IceState::Closed: name = "closed"; break;
+                }
+                blog(LOG_INFO, "[Ojowacam] WebRTC ICE state: %s", name);
             });
 
             impl_->peer_connection = new_pc;
@@ -1136,17 +1263,35 @@ void WebRTCTransport::handleIncomingRtp(
     const std::shared_ptr<std::unique_ptr<RtpDepacketizer>>& depay) {
     RtpPacketView view;
     if (!parseRtpPacket(data, size, view)) return;
+    static std::atomic<uint64_t> rtp_in_log{0};
+    if (rtp_in_log.fetch_add(1) % 50 == 0) {
+        blog(LOG_INFO, "[Ojowacam] RTP in: payload_type=%u size=%zu", view.payload_type, view.payload_size);
+    }
 
     auto it = impl_->video_codec_by_pt.find(view.payload_type);
     if (it != impl_->video_codec_by_pt.end()) {
         // Video payload: depacketize into complete access units and hand the
         // codec bitstream to the receiver's decoder pipeline.
+        static std::atomic<uint64_t> rtp_packets{0};
+        static std::atomic<uint64_t> decoded_frames{0};
+        const uint64_t packet_index = rtp_packets.fetch_add(1) + 1;
+        if (packet_index == 1 || packet_index % 300 == 0) {
+            blog(LOG_INFO, "[Ojowacam] Video RTP packets: %llu (payload_type=%u)",
+                 static_cast<unsigned long long>(packet_index),
+                 static_cast<unsigned>(view.payload_type));
+        }
         auto& slot = *depay;
         if (!slot || slot->codec() != it->second) {
             slot = std::make_unique<RtpDepacketizer>(it->second);
         }
         slot->push(view, [this](const std::vector<uint8_t>& frame_data, uint32_t rtp_ts) {
             if (!onVideoFrame) return;
+            static std::atomic<uint64_t> frame_counter{0};
+            const uint64_t frame_index = frame_counter.fetch_add(1) + 1;
+            if (frame_index == 1 || frame_index % 300 == 0) {
+                blog(LOG_INFO, "[Ojowacam] Video frames decoded: %llu (bytes=%zu)",
+                     static_cast<unsigned long long>(frame_index), frame_data.size());
+            }
             VideoFrame frame;
             frame.data = frame_data;
             frame.timestamp_us = static_cast<int64_t>(rtp_ts) * 1000000LL / 90000LL;

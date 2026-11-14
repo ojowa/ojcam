@@ -21,6 +21,11 @@ public:
     // The plugin's own WebSocket server (kPluginWsPort) always starts with
     // connect() so the phone can dial in regardless of these options.
     void setConnectionOptions(bool auto_discover);
+    /** Mark this transport as the Wireless Microphone stream: it identifies
+     * itself to the phone (role=mic) and requests the mic PCM broadcast. */
+    void setRequestsWirelessMic(bool wireless_mic);
+    // Tells the phone which stream this connection carries (video or mic).
+    void declareRole();
 
     bool connect(const std::string& url) override;
     void disconnect() override;
@@ -37,6 +42,10 @@ private:
     // active session rejects additional peers). The socket arrives as
     // uintptr_t because SOCKET is pointer-sized on 64-bit Windows.
     void onInboundSignaling(uintptr_t socket_handle);
+    // Same as onInboundSignaling but reports whether this transport took
+    // ownership of the socket: the shared plugin WebSocket server offers
+    // each inbound connection to the transports that can use it.
+    bool tryAcceptInbound(uintptr_t socket_handle);
     // Marks the signaling session live and notifies observers.
     void markSessionActive(const char* how);
     void handleSignalingMessage(const std::string& message);
