@@ -272,17 +272,27 @@ export class StreamingService {
       this.streamConfig = config;
       this.currentCameraId = cameraId;
       this.streamResourcesStarted = true;
+      console.log('[stream] step: permissions');
       // The camera may negotiate a different size than requested (e.g. 4K not
       // supported on the selected lens) — encode what it actually delivers.
+      console.log('[stream] step: startCapture');
       const capture = await CameraService.startCapture(cameraId, this.width, this.height, config.fps);
       const outWidth = capture && capture.width > 0 ? capture.width : this.width;
       const outHeight = capture && capture.height > 0 ? capture.height : this.height;
+      console.log(`[stream] capture ok: ${outWidth}x${outHeight}`);
+      console.log('[stream] step: startAudio');
       await AudioService.startRecording();
+      console.log('[stream] step: initEncoder');
       await EncoderService.initEncoder(outWidth, outHeight, config.bitrate, config.fps);
+      console.log('[stream] step: createPeerConnection');
       await WebRTCService.createPeerConnection(this.iceServers);
+      console.log('[stream] step: addVideoTrack');
       await WebRTCService.addVideoTrack('ojowacam-video');
+      console.log('[stream] step: addAudioTrack');
       await WebRTCService.addAudioTrack('ojowacam-audio');
+      console.log('[stream] step: createOffer');
       await WebRTCService.createOffer();
+      console.log('[stream] step: sendStartSession');
       const videoConfig: VideoConfig = {
         resolution: `${outWidth}x${outHeight}`, fps: config.fps, codec: config.codec, bitrate: config.bitrate,
       };
@@ -301,7 +311,14 @@ export class StreamingService {
       console.log('Streaming started');
       return true;
     } catch (error) {
-      console.error('Failed to start streaming:', error);
+      const err = error as { message?: string; code?: string; stack?: string } | null;
+      console.error(
+        '[stream] Failed to start streaming:',
+        `message=${JSON.stringify(err?.message)}`,
+        `code=${JSON.stringify(err?.code)}`,
+        `string=${String(error)}`,
+        `stack=${err?.stack ?? 'n/a'}`,
+      );
       this.state.error = error instanceof Error ? error.message : 'Failed to start streaming';
       this.notifyStateChange();
       await this.stopStreaming();
