@@ -46,6 +46,7 @@ class WebRTCModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     }
 
     private fun emitLocalSdp(type: String, sdp: String) {
+        Log.i(TAG, "Local SDP ($type): ${sdp.take(1500)}")
         val map = Arguments.createMap()
         map.putString("type", type)
         map.putString("sdp", sdp)

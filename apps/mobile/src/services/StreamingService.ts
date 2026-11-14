@@ -285,7 +285,19 @@ export class StreamingService {
         await AudioService.startRecording();
       }
       console.log('[stream] step: initEncoder');
-      await EncoderService.initEncoder(outWidth, outHeight, config.bitrate, config.fps);
+      try {
+        await EncoderService.initEncoder(outWidth, outHeight, config.bitrate, config.fps);
+        console.log('[stream] encoder ready');
+      } catch (encError) {
+        // Non-fatal: the WebRTC track encodes natively (org.webrtc software
+        // encoder). The MediaCodec encoder is only used by the USB/raw path.
+        const enc = encError as { message?: string; code?: string };
+        console.warn(
+          '[stream] encoder init failed (non-fatal, WebRTC encodes natively):',
+          `code=${JSON.stringify(enc?.code)}`,
+          `message=${JSON.stringify(enc?.message)}`,
+        );
+      }
       console.log('[stream] step: createPeerConnection');
       await WebRTCService.createPeerConnection(this.iceServers);
       console.log('[stream] step: addVideoTrack');

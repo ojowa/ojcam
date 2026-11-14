@@ -24,47 +24,83 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
     override fun getName(): String = "OjowacamEncoder"
 
+    private fun buildFormat(width: Int, height: Int, bitrate: Int, fps: Int, colorFormat: Int): MediaFormat {
+        val format = MediaFormat.createVideoFormat("video/avc", width, height)
+        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat)
+        format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+        return format
+    }
+
     @ReactMethod
     fun initEncoder(width: Int, height: Int, bitrate: Int, fps: Int, promise: Promise) {
+        var stage = "release"
         try {
             releaseEncoderInternal()
             this.width = width
             this.height = height
 
-            val format = MediaFormat.createVideoFormat("video/avc", width, height)
-            format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-            format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            format.setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
-            format.setInteger(MediaFormat.KEY_LEVEL, 51)
-            format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+            stage = "format"
+            val flexible = MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+            val semiPlanar = MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
 
+            stage = "create"
             mediaCodec = MediaCodec.createEncoderByType("video/avc")
-            mediaCodec!!.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            mediaCodec!!.start()
+            val codec = mediaCodec!!
+
+            stage = "configure"
+            try {
+                val format = buildFormat(width, height, bitrate, fps, flexible)
+                format.setInteger(MediaFormat.KEY_LEVEL, 51)
+                format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            } catch (first: Exception) {
+                // Some vendors reject explicit profile/level or the flexible
+                // color format — retry with progressively looser settings.
+                Log.w(TAG, "configure(High@5.1,flexible) failed: ${first.javaClass.simpleName}: ${first.message}", first)
+                stage = "configure-retry"
+                try { codec.reset() } catch (_: Exception) {}
+                try {
+                    codec.configure(buildFormat(width, height, bitrate, fps, flexible), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                } catch (second: Exception) {
+                    Log.w(TAG, "configure(flexible) failed: ${second.javaClass.simpleName}: ${second.message}", second)
+                    stage = "configure-retry-semiplanar"
+                    try { codec.reset() } catch (_: Exception) {}
+                    codec.configure(buildFormat(width, height, bitrate, fps, semiPlanar), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                }
+            }
+
+            stage = "start"
+            codec.start()
 
             isEncoding = true
 
             encodeThread = Thread {
                 val bufferInfo = MediaCodec.BufferInfo()
+                val codecRef = codec
                 while (isEncoding) {
-                    val outputBufferId = mediaCodec!!.dequeueOutputBuffer(bufferInfo, 10000)
-                    when {
-                        outputBufferId >= 0 -> {
-                            val outputBuffer = mediaCodec!!.getOutputBuffer(outputBufferId)
-                            if (outputBuffer != null) {
-                                val encodedData = ByteArray(bufferInfo.size)
-                                outputBuffer.get(encodedData)
-                                val nalData = stripStartCode(encodedData)
-                                onEncodedFrame?.invoke(nalData)
-                                mediaCodec!!.releaseOutputBuffer(outputBufferId, false)
+                    try {
+                        val outputBufferId = codecRef.dequeueOutputBuffer(bufferInfo, 10000)
+                        when {
+                            outputBufferId >= 0 -> {
+                                val outputBuffer = codecRef.getOutputBuffer(outputBufferId)
+                                if (outputBuffer != null) {
+                                    val encodedData = ByteArray(bufferInfo.size)
+                                    outputBuffer.get(encodedData)
+                                    val nalData = stripStartCode(encodedData)
+                                    onEncodedFrame?.invoke(nalData)
+                                    codecRef.releaseOutputBuffer(outputBufferId, false)
+                                }
                             }
+                            outputBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                                Log.d(TAG, "Output format changed: ${codecRef.outputFormat}")
+                            }
+                            outputBufferId == MediaCodec.INFO_TRY_AGAIN_LATER -> { /* no output yet */ }
                         }
-                        outputBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            val newFormat = mediaCodec!!.outputFormat
-                            Log.d(TAG, "Output format changed: $newFormat")
-                        }
-                        outputBufferId == MediaCodec.INFO_TRY_AGAIN_LATER -> Log.d(TAG, "No output buffer available")
+                    } catch (e: Exception) {
+                        if (isEncoding) Log.e(TAG, "encode loop error", e)
+                        break
                     }
                 }
             }
@@ -73,7 +109,16 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             promise.resolve(true)
         } catch (e: Exception) {
             isEncoding = false
-            promise.reject("ENCODER_ERROR", e.message, e)
+            try { mediaCodec?.release() } catch (_: Exception) {}
+            mediaCodec = null
+            val detail = buildString {
+                append(e.javaClass.name)
+                val msg = e.message
+                if (!msg.isNullOrEmpty()) append(": ").append(msg)
+                if (e is MediaCodec.CodecException) append(" | ").append(e.diagnosticInfo)
+            }
+            Log.e(TAG, "initEncoder failed at stage=$stage (${width}x$height @ $bitrate bps, $fps fps): $detail", e)
+            promise.reject("ENCODER_ERROR", "[$stage] $detail", e)
         }
     }
 
@@ -119,8 +164,8 @@ class EncoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         isEncoding = false
         encodeThread?.interrupt()
         encodeThread = null
-        mediaCodec?.stop()
-        mediaCodec?.release()
+        try { mediaCodec?.stop() } catch (_: Exception) {}
+        try { mediaCodec?.release() } catch (_: Exception) {}
         mediaCodec = null
     }
 
