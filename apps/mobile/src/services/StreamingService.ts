@@ -17,6 +17,7 @@ import { authService } from './security/AuthService';
 import { deviceIdentity } from './security/DeviceIdentity';
 import { initializeSecureStorage } from './security/SecureStorageAdapter';
 import { connectionConfig } from './config/ConnectionConfig';
+import { streamSettings } from './config/StreamSettings';
 import { createStartSession, type VideoConfig, type AudioConfig } from './protocol/messageTypes';
 import { encodeMessageBase64 } from './protocol/ProtobufCodec';
 
@@ -28,6 +29,7 @@ export interface StreamingConfig {
 
 export interface StreamingState {
   isStreaming: boolean;
+  isAudioBroadcasting: boolean;
   isConnected: boolean;
   isAuthenticated: boolean;
   currentCameraId: string | null;
@@ -60,6 +62,7 @@ export class StreamingService {
 
   private state: StreamingState = {
     isStreaming: false,
+    isAudioBroadcasting: false,
     isConnected: false,
     isAuthenticated: false,
     currentCameraId: null,
@@ -69,6 +72,9 @@ export class StreamingService {
 
   private onStateChange?: (state: StreamingState) => void;
   private pairingWaiter: { resolve: (success: boolean) => void } | null = null;
+  /** Wireless Mic state: capture running + mute flag (mute sends nothing). */
+  private audioBroadcasting = false;
+  private audioMuted = false;
 
   constructor(config: StreamingConfig = defaultStreamingConfig) {
     this.config = config;
@@ -82,6 +88,7 @@ export class StreamingService {
         this.state.isConnected = false;
         this.state.isAuthenticated = false;
         if (this.isStreaming) { void this.stopStreaming(); }
+        if (this.audioBroadcasting) { void this.stopAudioBroadcast(); }
         this.notifyStateChange();
       },
       onReconnecting: (attempt) => {
@@ -238,6 +245,11 @@ export class StreamingService {
 
   async startStreaming(cameraId: string, config: StreamConfig): Promise<boolean> {
     if (this.isStreaming) { console.warn('Already streaming'); return false; }
+    if (this.audioBroadcasting) {
+      this.state.error = 'Stop the Wireless Mic broadcast before starting the camera stream.';
+      this.notifyStateChange();
+      return false;
+    }
     try {
       this.state.error = null;
       await connectionConfig.load();
@@ -360,6 +372,96 @@ export class StreamingService {
     return failure === undefined;
   }
 
+  /**
+   * Start the Wireless Mic broadcast: raw microphone PCM is streamed to OBS
+   * over the signaling WebSocket (binary frames), no camera/WebRTC involved.
+   */
+  async startAudioBroadcast(): Promise<boolean> {
+    if (this.audioBroadcasting) { console.warn('Audio broadcast already running'); return false; }
+    try {
+      this.state.error = null;
+      if (Platform.OS !== 'android') {
+        // The PCM-over-WebSocket capture path (s16le 48k stereo emission) is
+        // implemented natively on Android; fail honestly elsewhere.
+        throw new Error('The Wireless Mic broadcast is currently Android-only.');
+      }
+      if (this.isStreaming) {
+        throw new Error('Stop the camera stream before starting the Wireless Mic.');
+      }
+      await connectionConfig.load();
+      this.config.signalingUrl = connectionConfig.getSignalingUrl();
+      signalingService.setServerUrl(this.config.signalingUrl);
+      if (!signalingService.isConnected()) {
+        await signalingService.connect();
+      }
+      if (!authService.isAuthenticated()) {
+        if (!this.config.autoPair) {
+          throw new Error('Not authenticated. Session required before streaming.');
+        }
+        await this.requestPairing();
+        const paired = await this.waitForPairing(30 * 1000);
+        if (!paired || !authService.isAuthenticated()) {
+          throw new Error('Unable to establish a session with OBS.');
+        }
+      }
+      if (Platform.OS === 'android') {
+        const perms = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+        ]);
+        if (perms[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] !== PermissionsAndroid.RESULTS.GRANTED) {
+          throw new Error('Microphone permission is required to broadcast audio.');
+        }
+      }
+      await streamSettings.load();
+      await AudioService.setNoiseSuppression(streamSettings.isNoiseSuppressionEnabled());
+      await AudioService.setGain(streamSettings.getGainBoost());
+      AudioService.setOnAudioData((pcm) => {
+        // Muted: send nothing — silence is the absence of frames, never faked.
+        if (this.audioMuted) return;
+        signalingService.sendAudioFrame(pcm);
+      });
+      const started = await AudioService.startRecording();
+      if (!started) throw new Error('Unable to start microphone capture.');
+      this.audioBroadcasting = true;
+      this.audioMuted = false;
+      this.state.isAudioBroadcasting = true;
+      this.state.error = null;
+      this.notifyStateChange();
+      console.log('Wireless Mic broadcast started');
+      return true;
+    } catch (error) {
+      console.error('Failed to start audio broadcast:', error);
+      const message = error instanceof Error ? error.message : 'Failed to start audio broadcast';
+      await this.stopAudioBroadcast();
+      this.state.error = message;
+      this.notifyStateChange();
+      return false;
+    }
+  }
+
+  async stopAudioBroadcast(): Promise<boolean> {
+    const wasBroadcasting = this.audioBroadcasting;
+    AudioService.setOnAudioData(null);
+    let failure: Error | null = null;
+    try {
+      await AudioService.stopRecording();
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+    this.audioBroadcasting = false;
+    this.audioMuted = false;
+    this.state.isAudioBroadcasting = false;
+    this.state.error = failure ? failure.message : null;
+    this.notifyStateChange();
+    if (!failure && wasBroadcasting) console.log('Wireless Mic broadcast stopped');
+    return failure === null;
+  }
+
+  /** Mute/unmute the Wireless Mic. Muted = no frames sent (real silence). */
+  setAudioMuted(muted: boolean): void {
+    this.audioMuted = muted;
+  }
+
   async handleIncomingSignalingMessage(message: any): Promise<void> {
     switch (message.type) {
       case 'ANSWER': await WebRTCService.setRemoteDescription('answer', message.sdp); break;
@@ -378,6 +480,8 @@ export class StreamingService {
   }
 
   getIsStreaming(): boolean { return this.isStreaming; }
+  getIsAudioBroadcasting(): boolean { return this.audioBroadcasting; }
+  getIsAudioMuted(): boolean { return this.audioMuted; }
   getCurrentCameraId(): string | null { return this.currentCameraId; }
   getConfig(): StreamConfig { return { ...this.streamConfig }; }
   getSignalingState(): any { return signalingService.getState(); }

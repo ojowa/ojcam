@@ -21,6 +21,8 @@ jest.mock('react-native', () => ({
       startRecording: jest.fn(),
       stopRecording: jest.fn(),
       getAudioLevels: jest.fn(),
+      setNoiseSuppression: jest.fn(),
+      setGain: jest.fn(),
     },
     OjowacamEncoder: {
       initEncoder: jest.fn(),

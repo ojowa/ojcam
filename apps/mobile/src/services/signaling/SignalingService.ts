@@ -64,6 +64,11 @@ export class SignalingService {
   setServerUrl(url: string): void { this.config.serverUrl = url; this.transport.setUrl(url); }
   getServerUrl(): string { return this.config.serverUrl; }
   async sendReliable(data: string): Promise<boolean> { return this.transport.sendReliable(data); }
+  /**
+   * Stream one raw PCM chunk to OBS (WebSocket binary frame, opcode 0x2).
+   * Returns false when no peer is ready — the caller drops the chunk.
+   */
+  sendAudioFrame(pcm: Uint8Array): boolean { return this.transport.sendBinary(pcm); }
   async sendStartSession(payload: string, sessionId?: string): Promise<boolean> {
     const message = await authService.authenticateMessage({ type: 'START_SESSION', sessionId, payload, deviceId: deviceIdentity.getDeviceId() });
     return this.transport.sendReliable(JSON.stringify(message));

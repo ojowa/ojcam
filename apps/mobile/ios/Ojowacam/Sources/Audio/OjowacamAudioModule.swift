@@ -14,6 +14,10 @@ class OjowacamAudioModule: RCTEventEmitter {
     private var isRecording = false
     private var audioFormat: AVAudioFormat?
 
+    /// RMS of the captured signal normalized to full-scale sine RMS (0.7071),
+    /// updated from the tap and reported by getAudioLevels().
+    private var lastLevel: Float = 0.0
+
     override static func moduleName() -> String! {
         return "OjowacamAudio"
     }
@@ -79,13 +83,14 @@ class OjowacamAudioModule: RCTEventEmitter {
         audioEngine = nil
         inputNode = nil
         isRecording = false
+        lastLevel = 0.0
 
         resolve(true)
     }
 
     @objc
     func getAudioLevels(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        resolve(0.5)
+        resolve(isRecording ? Double(lastLevel) : 0.0)
     }
 
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, when: AVAudioTime) {
@@ -95,8 +100,18 @@ class OjowacamAudioModule: RCTEventEmitter {
         let frameCount = Int(buffer.frameLength)
 
         var samples = [Float](repeating: 0, count: frameCount)
+        var sumSquares: Double = 0.0
         for i in 0..<frameCount {
             samples[i] = channelData[i]
+            sumSquares += Double(channelData[i]) * Double(channelData[i])
+        }
+        if frameCount > 0 {
+            let rms = sqrt(sumSquares / Double(frameCount))
+            // Normalize against full-scale sine RMS (~0.7071) for a 0..1 meter.
+            let normalized = Float(min(1.0, max(0.0, rms / 0.7071)))
+            DispatchQueue.main.async {
+                self.lastLevel = normalized
+            }
         }
 
         let data = Data(buffer: UnsafeBufferPointer(start: samples, count: frameCount))

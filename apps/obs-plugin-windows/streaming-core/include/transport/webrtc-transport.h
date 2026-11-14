@@ -36,6 +36,9 @@ private:
     // Only defined for the libdatachannel backend (OJO_LIBDATACHANNEL).
     void handleIncomingRtp(const uint8_t* data, size_t size,
                            const std::shared_ptr<std::unique_ptr<RtpDepacketizer>>& depay);
+    // Handles a WebSocket binary frame carrying the Wireless Mic's raw PCM
+    // (s16le stereo @ 48 kHz), converting it to an AudioFrame for OBS.
+    void handleBinaryAudio(const std::string& payload);
     static std::string extractJsonField(const std::string& json, const std::string& field);
     static std::string escapeJson(const std::string& input);
     static std::string unescapeJson(const std::string& input);

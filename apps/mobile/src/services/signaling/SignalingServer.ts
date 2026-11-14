@@ -73,7 +73,11 @@ export interface WsFrame {
 
 /** Server→client frame. Servers must NOT mask. */
 export function encodeServerFrame(payload: string, opcode = 0x1): Uint8Array {
-  const data = utf8Encode(payload);
+  return encodeServerFrameBytes(utf8Encode(payload), opcode);
+}
+
+/** Server→client frame for raw binary payloads (e.g. opcode 0x2 PCM audio). */
+export function encodeServerFrameBytes(data: Uint8Array, opcode = 0x2): Uint8Array {
   const len = data.length;
   let header: number[];
   if (len <= 125) {
@@ -309,6 +313,21 @@ export class SignalingServer {
       return true;
     } catch {
       this.enqueue(data);
+      return false;
+    }
+  }
+
+  /**
+   * Send a raw binary frame (opcode 0x2), used for Wireless Mic PCM chunks.
+   * Realtime audio is dropped (not queued) when no peer is ready — stale mic
+   * data must never play back late.
+   */
+  sendBinary(data: Uint8Array): boolean {
+    if (!this.isReady() || !this.peer) return false;
+    try {
+      this.peer.write(encodeServerFrameBytes(data));
+      return true;
+    } catch {
       return false;
     }
   }

@@ -235,6 +235,7 @@ public:
     }
 
     std::function<void(const std::string&)> onMessage;
+    std::function<void(const std::string&)> onBinary;
     std::function<void(bool)> onStateChanged;
 
 private:
@@ -258,7 +259,10 @@ private:
                 case 0x1: // text
                     if (onMessage) onMessage(msg);
                     break;
-                default: // ignore binary/continuation/unknown
+                case 0x2: // binary: raw PCM from the phone's Wireless Mic broadcast
+                    if (onBinary) onBinary(msg);
+                    break;
+                default: // continuation/unknown
                     break;
             }
         }
@@ -408,6 +412,9 @@ bool WebRTCTransport::connect(const std::string& url) {
     impl_->signaling = std::make_unique<SignalingClient>();
     impl_->signaling->onMessage = [this](const std::string& message) {
         handleSignalingMessage(message);
+    };
+    impl_->signaling->onBinary = [this](const std::string& payload) {
+        handleBinaryAudio(payload);
     };
     impl_->signaling->onStateChanged = [this](bool connected) {
         impl_->connected = connected;
@@ -932,6 +939,44 @@ void WebRTCTransport::handleIncomingRtp(
 #endif
 }
 #endif  // OJO_LIBDATACHANNEL
+
+void WebRTCTransport::handleBinaryAudio(const std::string& payload) {
+    // Raw microphone PCM from the phone's Wireless Mic broadcast:
+    // little-endian signed 16-bit interleaved stereo at 48 kHz. The phone only
+    // sends these while its broadcast is running; each frame is converted to
+    // float and handed to the receiver's OBS audio path.
+    {
+        std::lock_guard<std::mutex> lock(impl_->session_mutex);
+        if (impl_->session_token.empty()) {
+            static std::atomic<bool> warned_no_session{false};
+            if (!warned_no_session.exchange(true)) {
+                blog(LOG_WARNING,
+                     "[Ojowacam] Wireless mic PCM dropped: no session (pair with the phone first)");
+            }
+            return;
+        }
+    }
+
+    // Whole stereo s16 frames only (4 bytes per left+right sample pair).
+    if (payload.size() < 4 || payload.size() % 4 != 0) return;
+
+    constexpr int kChannels = 2;
+    const size_t sample_count = payload.size() / sizeof(int16_t);
+    const auto* in = reinterpret_cast<const int16_t*>(payload.data());
+
+    AudioFrame frame;
+    frame.sample_rate = 48000;
+    frame.channels = kChannels;
+    frame.timestamp_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    frame.samples.resize(sample_count);
+    for (size_t i = 0; i < sample_count; ++i) {
+        frame.samples[i] = static_cast<float>(in[i]) / 32768.0f;
+    }
+    if (onAudioFrame) onAudioFrame(frame);
+}
 
 void WebRTCTransport::handleSignalingMessage(const std::string& message) {
     blog(LOG_DEBUG, "[Ojowacam] Signaling message: %s", message.c_str());

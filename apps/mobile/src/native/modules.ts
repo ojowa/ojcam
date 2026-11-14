@@ -65,6 +65,9 @@ export class CameraService {
 }
 
 export class AudioService {
+  private static onAudioDataCallback: ((pcm: Uint8Array) => void) | null = null;
+  private static audioSubscription: EmitterSubscription | null = null;
+
   static async startRecording(): Promise<boolean> {
     return OjowacamAudio.startRecording();
   }
@@ -75,6 +78,47 @@ export class AudioService {
 
   static async getAudioLevels(): Promise<number> {
     return OjowacamAudio.getAudioLevels();
+  }
+
+  static async setNoiseSuppression(enabled: boolean): Promise<boolean> {
+    if (typeof OjowacamAudio?.setNoiseSuppression !== 'function') {
+      console.warn('Noise suppression is not implemented for this platform');
+      return false;
+    }
+    return OjowacamAudio.setNoiseSuppression(enabled);
+  }
+
+  static async setGain(gain: number): Promise<boolean> {
+    if (typeof OjowacamAudio?.setGain !== 'function') {
+      console.warn('Mic gain control is not implemented for this platform');
+      return false;
+    }
+    return OjowacamAudio.setGain(gain);
+  }
+
+  /** Subscribe to raw captured PCM chunks (base64 on the wire, s16le stereo 48k). */
+  static setOnAudioData(callback: ((pcm: Uint8Array) => void) | null): void {
+    this.onAudioDataCallback = callback;
+    if (callback && !this.audioSubscription) {
+      this.audioSubscription = DeviceEventEmitter.addListener(
+        'onAudioData',
+        (event: { data?: string }) => {
+          if (!this.onAudioDataCallback || typeof event?.data !== 'string') return;
+          let bytes: Uint8Array;
+          try {
+            const binary = atob(event.data);
+            bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          } catch {
+            return; // malformed chunk: drop rather than send garbage
+          }
+          this.onAudioDataCallback(bytes);
+        },
+      );
+    } else if (!callback && this.audioSubscription) {
+      this.audioSubscription.remove();
+      this.audioSubscription = null;
+    }
   }
 }
 
