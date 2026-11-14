@@ -33,6 +33,11 @@
         <File Id="OjowacamObsPluginDll"
               Source="$(var.PluginDir)\bin\64bit\ojowacam-obs.dll"
               KeyPath="yes" />
+        <!-- FFmpeg runtime (pinned n8.1 shared build): ojowacam-obs.dll's
+             import table resolves avcodec-62 -> avutil-60 from this folder.
+             Versioned names do not collide with OBS's bundled FFmpeg. -->
+        <File Id="FfmpegAvcodec62Dll" Source="$(var.PluginDir)\bin\64bit\avcodec-62.dll" />
+        <File Id="FfmpegAvutil60Dll" Source="$(var.PluginDir)\bin\64bit\avutil-60.dll" />
         <RemoveFolder Id="RemovePluginBin64Folder" Directory="PluginBin64Folder" On="uninstall" />
         <RemoveFolder Id="RemovePluginBinFolder" Directory="PluginBinFolder" On="uninstall" />
       </Component>

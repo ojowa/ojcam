@@ -35,6 +35,11 @@ struct StreamReceiver::Impl {
     // Frame converter format (set from SPS or default)
     VideoPixelFormat video_format_ = VideoPixelFormat::Unknown;
 
+    // Video decoder swap on codec negotiation (guarded by decoder_mutex);
+    // the decode path runs on transport threads concurrently with the swap.
+    std::mutex decoder_mutex;
+    std::string negotiated_codec;
+
     // Last video size pushed to OBS (for onVideoSizeChanged)
     int last_width_ = 0;
     int last_height_ = 0;
@@ -67,7 +72,32 @@ StreamReceiver::StreamReceiver(obs_source_t* video_source, obs_source_t* audio_s
 
     // Transport → decoder pipeline
     impl_->transport->onVideoFrame = [this](const VideoFrame& frame) {
-        impl_->video_decoder->decode(frame.data, frame.timestamp_us);
+        std::lock_guard<std::mutex> lock(impl_->decoder_mutex);
+        if (impl_->video_decoder) {
+            impl_->video_decoder->decode(frame.data, frame.timestamp_us);
+        }
+    };
+
+    // The remote offer decides the codec (e.g. VP8 from the phone's software
+    // encoder factory): switch in a matching decoder before frames arrive.
+    impl_->transport->onVideoCodecNegotiated = [this](const std::string& codec) {
+        std::lock_guard<std::mutex> lock(impl_->decoder_mutex);
+        if (impl_->negotiated_codec == codec) return;
+
+        auto decoder = HardwareVideoDecoder::Create(codec);
+        if (!decoder || !decoder->initialize(1920, 1080, codec)) {
+            blog(LOG_ERROR,
+                 "[Ojowacam] No working video decoder for negotiated codec %s; video frames stay dropped",
+                 codec.c_str());
+            return;
+        }
+        decoder->onFrameDecoded = [this](const VideoFrame& frame) {
+            pushVideoFrameToOBS(frame);
+        };
+        if (impl_->video_decoder) impl_->video_decoder->release();
+        impl_->video_decoder = std::move(decoder);
+        impl_->negotiated_codec = codec;
+        blog(LOG_INFO, "[Ojowacam] Video decoder switched to %s", codec.c_str());
     };
 
     // Transport delivers decoded PCM audio in AudioFrame::samples

@@ -192,6 +192,28 @@ jobs:
           Get-ChildItem -Path "$env:OBS_INSTALL_PREFIX/lib" -Recurse -Filter "*.lib" -ErrorAction SilentlyContinue
           Get-ChildItem -Path "$env:OBS_INSTALL_PREFIX/bin" -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue
 
+      - name: Download FFmpeg development build (Windows)
+        shell: pwsh
+        run: |
+          # Shared (LGPL) FFmpeg n8.1: headers + import libs for configure,
+          # runtime DLLs for staging next to the plugin (find via .deps/ffmpeg).
+          $ffmpegBuild = 'ffmpeg-n8.1-latest-win64-lgpl-shared-8.1'
+          $ffmpegArchive = Join-Path $env:RUNNER_TEMP "$ffmpegBuild.zip"
+          Invoke-WebRequest `
+            -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$ffmpegBuild.zip" `
+            -OutFile $ffmpegArchive
+          $extractPath = Join-Path $env:RUNNER_TEMP 'ffmpeg-extract'
+          Expand-Archive -Path $ffmpegArchive -DestinationPath $extractPath -Force
+          $inner = Get-ChildItem $extractPath -Directory | Select-Object -First 1
+          if (-not $inner) { throw 'FFmpeg archive extraction failed' }
+          $dest = Join-Path $env:GITHUB_WORKSPACE '.deps/ffmpeg'
+          foreach ($sub in 'include', 'lib', 'bin') {
+            Copy-Item -Recurse -Force (Join-Path $inner.FullName $sub) $dest
+          }
+          if (-not (Test-Path (Join-Path $dest 'include/libavcodec/avcodec.h'))) { throw 'FFmpeg include staging failed' }
+          if (-not (Test-Path (Join-Path $dest 'lib/avcodec.lib'))) { throw 'FFmpeg import lib staging failed' }
+          Write-Host "Staged FFmpeg development build to $dest"
+
       - name: Configure Ojowacam OBS Plugin (Windows)
         shell: pwsh
         run: |
@@ -237,6 +259,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $pluginStage 'data') | Out-Null
           Copy-Item -LiteralPath $pluginDll -Destination (Join-Path $pluginStage 'bin/64bit/ojowacam-obs.dll')
           Copy-Item -LiteralPath $moduleJson -Destination (Join-Path $pluginStage 'data/module.json')
+          # Runtime FFmpeg DLLs the plugin's import table resolves against
+          # (avcodec -> avutil); must ship beside ojowacam-obs.dll.
+          $ffmpegBin = Join-Path $env:GITHUB_WORKSPACE '.deps/ffmpeg/bin'
+          foreach ($dllName in 'avcodec-62.dll', 'avutil-60.dll') {
+            $src = Join-Path $ffmpegBin $dllName
+            if (-not (Test-Path $src)) { throw "Missing FFmpeg runtime DLL: $src" }
+            Copy-Item -LiteralPath $src -Destination (Join-Path $pluginStage 'bin/64bit') -Force
+          }
           candle.exe "-dPluginDir=$pluginStage" -out apps/obs-plugin-windows/build/ojowacam-obs-plugin.wixobj apps/obs-plugin-windows/installers/ojowacam-obs-plugin.wxs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           light.exe -out apps/obs-plugin-windows/build/Ojowacam.ObsPlugin.msi apps/obs-plugin-windows/build/ojowacam-obs-plugin.wixobj

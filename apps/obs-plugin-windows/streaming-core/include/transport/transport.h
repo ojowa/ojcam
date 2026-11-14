@@ -18,6 +18,9 @@ public:
     std::function<void(const VideoFrame&)> onVideoFrame;
     std::function<void(const AudioFrame&)> onAudioFrame;
     std::function<void(bool)> onConnectionStateChanged;
+    // Fires once the remote offer's video codec is known (e.g. "VP8"), so the
+    // receiver can pick a matching decoder before the first frame arrives.
+    std::function<void(const std::string&)> onVideoCodecNegotiated;
     
     virtual bool isConnected() const = 0;
 };

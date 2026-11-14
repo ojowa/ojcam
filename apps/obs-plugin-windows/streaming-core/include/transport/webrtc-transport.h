@@ -1,6 +1,10 @@
 #pragma once
 
 #include "transport.h"
+#include "rtp-depay.h"
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <string>
 
 namespace ojowacam {
@@ -27,6 +31,11 @@ private:
     void sendAnswer();
     void sendStartSessionAck(const std::string& session_id);
     void sendPong();
+    // Dispatches one incoming RTP packet: video payloads go through the
+    // per-track depacketizer, everything else is decoded as Opus audio.
+    // Only defined for the libdatachannel backend (OJO_LIBDATACHANNEL).
+    void handleIncomingRtp(const uint8_t* data, size_t size,
+                           const std::shared_ptr<std::unique_ptr<RtpDepacketizer>>& depay);
     static std::string extractJsonField(const std::string& json, const std::string& field);
     static std::string escapeJson(const std::string& input);
     static std::string unescapeJson(const std::string& input);

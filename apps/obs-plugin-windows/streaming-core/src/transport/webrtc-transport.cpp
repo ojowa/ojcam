@@ -11,6 +11,7 @@
 #include <memory>
 #include <cstdlib>
 #include <functional>
+#include <map>
 
 #ifdef OJO_WEBRTC_ENABLED
     #if defined(__APPLE__)
@@ -19,6 +20,20 @@
         #include <webrtc/api/peer_connection_interface.h>
         #include <webrtc/api/create_peerconnection_factory.h>
         #include <webrtc/modules/audio_device/include/audio_device.h>
+    #endif
+#endif
+
+#ifdef OJO_LIBDATACHANNEL
+    #include <rtc/rtc.hpp>
+    #include "transport/rtp-depay.h"
+    #ifdef OJO_OPUS_ENABLED
+        extern "C" {
+        #if defined(__has_include) && __has_include(<opus/opus.h>)
+            #include <opus/opus.h>
+        #else
+            #include <opus.h>
+        #endif
+        }
     #endif
 #endif
 
@@ -263,9 +278,7 @@ private:
 // WebRTCTransport implementation
 // ===========================================================================
 
-#ifdef OJO_WEBRTC_ENABLED
-
-#if defined(__APPLE__)
+#if defined(OJO_WEBRTC_ENABLED) && defined(__APPLE__)
 struct WebRTCTransport::Impl {
     std::string url;
     std::unique_ptr<SignalingClient> signaling;
@@ -286,7 +299,7 @@ struct WebRTCTransport::Impl {
     ~Impl() = default;
 };
 
-#elif defined(_WIN32)
+#elif defined(OJO_WEBRTC_ENABLED) && defined(_WIN32)
 struct WebRTCTransport::Impl {
     std::string url;
     std::unique_ptr<SignalingClient> signaling;
@@ -306,9 +319,42 @@ struct WebRTCTransport::Impl {
     Impl() = default;
     ~Impl() = default;
 };
+
+#elif defined(OJO_LIBDATACHANNEL)
+struct WebRTCTransport::Impl {
+    std::string url;
+    std::unique_ptr<SignalingClient> signaling;
+    bool connected = false;
+
+    // Signaling session state (guarded by session_mutex)
+    mutable std::mutex session_mutex;
+    std::string session_token;
+    std::string pending_session_id;
+
+    std::shared_ptr<rtc::PeerConnection> peer_connection;
+    std::mutex pc_mutex;
+
+    // Remote offer payload type -> codec map for RTP dispatch. Written on the
+    // signaling thread before tracks exist, read from the track thread.
+    std::map<int, std::string> video_codec_by_pt;
+    std::string negotiated_video_codec;
+
+    // Opus audio decoding (guarded by audio_mutex)
+    std::mutex audio_mutex;
+#ifdef OJO_OPUS_ENABLED
+    OpusDecoder* opus_decoder = nullptr;
+    int opus_channels = 0;
 #endif
 
-#else  // !OJO_WEBRTC_ENABLED
+    std::string local_sdp;
+    std::string remote_sdp;
+    std::mutex sdp_mutex;
+
+    Impl() = default;
+    ~Impl() = default;
+};
+
+#else  // no WebRTC backend compiled
 
 struct WebRTCTransport::Impl {
     std::string url;
@@ -328,13 +374,37 @@ struct WebRTCTransport::Impl {
     ~Impl() = default;
 };
 
-#endif  // OJO_WEBRTC_ENABLED
+#endif
 
 WebRTCTransport::WebRTCTransport() : impl_(new Impl()) {}
 WebRTCTransport::~WebRTCTransport() { disconnect(); delete impl_; }
 
 bool WebRTCTransport::connect(const std::string& url) {
     impl_->url = url;
+
+#if defined(OJO_LIBDATACHANNEL)
+    // A previous session's media state must not survive its signaling link:
+    // close any stale peer connection and opus decoder before reconnecting.
+    {
+        std::lock_guard<std::mutex> lock(impl_->pc_mutex);
+        if (impl_->peer_connection) {
+            impl_->peer_connection->close();
+            impl_->peer_connection = nullptr;
+        }
+    }
+    impl_->video_codec_by_pt.clear();
+    {
+        std::lock_guard<std::mutex> lock(impl_->audio_mutex);
+#ifdef OJO_OPUS_ENABLED
+        if (impl_->opus_decoder) {
+            opus_decoder_destroy(impl_->opus_decoder);
+            impl_->opus_decoder = nullptr;
+            impl_->opus_channels = 0;
+        }
+#endif
+    }
+#endif
+
     impl_->signaling = std::make_unique<SignalingClient>();
     impl_->signaling->onMessage = [this](const std::string& message) {
         handleSignalingMessage(message);
@@ -379,6 +449,27 @@ void WebRTCTransport::disconnect() {
 #endif
     }
 #endif  // OJO_WEBRTC_ENABLED
+
+#ifdef OJO_LIBDATACHANNEL
+    {
+        std::lock_guard<std::mutex> lock(impl_->pc_mutex);
+        if (impl_->peer_connection) {
+            impl_->peer_connection->close();
+            impl_->peer_connection = nullptr;
+        }
+    }
+    impl_->video_codec_by_pt.clear();
+    {
+        std::lock_guard<std::mutex> lock(impl_->audio_mutex);
+#ifdef OJO_OPUS_ENABLED
+        if (impl_->opus_decoder) {
+            opus_decoder_destroy(impl_->opus_decoder);
+            impl_->opus_decoder = nullptr;
+            impl_->opus_channels = 0;
+        }
+#endif
+    }
+#endif  // OJO_LIBDATACHANNEL
 
     impl_->local_sdp.clear();
     impl_->remote_sdp.clear();
@@ -630,34 +721,100 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
         }
     }
 #endif
-#else
+#elif defined(OJO_LIBDATACHANNEL)
+    if (type != "offer") {
+        // The phone is always the offerer; store and ignore anything else.
+        std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+        impl_->remote_sdp = sdp;
+        return;
+    }
+
+    // Learn payload type -> codec from the offer so incoming RTP is dispatched
+    // to the right depacketizer, and tell the receiver which decoder to prepare
+    // before the first frame arrives.
+    {
+        std::map<int, std::string> pt_map;
+        const std::string codec = parseSdpVideoCodecs(sdp, pt_map);
+        if (!pt_map.empty()) impl_->video_codec_by_pt = std::move(pt_map);
+        if (!codec.empty()) {
+            impl_->negotiated_video_codec = codec;
+            if (onVideoCodecNegotiated) onVideoCodecNegotiated(codec);
+            blog(LOG_INFO, "[Ojowacam] Remote video codec from offer: %s", codec.c_str());
+        }
+    }
+
+    std::shared_ptr<rtc::PeerConnection> pc;
+    {
+        std::lock_guard<std::mutex> lock(impl_->pc_mutex);
+        if (!impl_->peer_connection) {
+            rtc::Configuration config;
+            config.iceServers.emplace_back("stun:stun.l.google.com:19302");
+
+            auto new_pc = std::make_shared<rtc::PeerConnection>(config);
+
+            // Non-trickle answer: deliver the local description once ICE
+            // gathering completes, with candidates embedded in the SDP.
+            new_pc->onGatheringStateChange([this](rtc::PeerConnection::GatheringState state) {
+                if (state != rtc::PeerConnection::GatheringState::Complete) return;
+                std::shared_ptr<rtc::PeerConnection> current;
+                {
+                    std::lock_guard<std::mutex> lock(impl_->pc_mutex);
+                    current = impl_->peer_connection;
+                }
+                if (!current) return;
+                auto desc = current->localDescription();
+                if (!desc) return;
+                {
+                    std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+                    impl_->local_sdp = std::string(*desc);
+                }
+                sendAnswer();
+            });
+
+            new_pc->onTrack([this](std::shared_ptr<rtc::Track> track) {
+                track->setMediaHandler(std::make_shared<rtc::RtcpReceivingSession>());
+                // Per-track depacketizer state: confined to this track's message
+                // thread, so no cross-thread synchronization is needed for it.
+                auto depay = std::make_shared<std::unique_ptr<RtpDepacketizer>>();
+                track->onMessage(
+                    [this, depay](rtc::binary message) {
+                        handleIncomingRtp(reinterpret_cast<const uint8_t*>(message.data()),
+                                          message.size(), depay);
+                    },
+                    nullptr);
+            });
+
+            impl_->peer_connection = new_pc;
+        }
+        pc = impl_->peer_connection;
+    }
+
     {
         std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
         impl_->remote_sdp = sdp;
-        if (type == "offer") {
-            // Signaling-only fallback: a minimal answer completes the
-            // handshake so both sides can report a live session.
-            impl_->local_sdp =
-                "v=0\r\n"
-                "o=- 0 0 IN IP4 127.0.0.1\r\n"
-                "s=Ojowacam\r\nt=0 0\r\n"
-                "a=group:BUNDLE 0\r\n"
-                "a=msid-semantic: WMS\r\n"
-                "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n"
-                "c=IN IP4 0.0.0.0\r\n"
-                "a=ice-ufrag:ojoc\r\n"
-                "a=ice-pwd:ojowacamicepwd0000000000\r\n"
-                "a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n"
-                "a=setup:active\r\n"
-                "a=mid:0\r\n"
-                "a=sctp-port:5000\r\n";
-        }
-        impl_->connected = true;
-        connected_ = true;
-        blog(LOG_INFO, "[Ojowacam] Remote description set (fallback): %s", type.c_str());
+        impl_->local_sdp.clear();
     }
+
+    try {
+        // Internally generates the local answer and starts ICE gathering;
+        // onGatheringStateChange delivers it via sendAnswer().
+        pc->setRemoteDescription(rtc::Description(sdp, "offer"));
+    } catch (const std::exception& e) {
+        blog(LOG_ERROR, "[Ojowacam] setRemoteDescription failed: %s", e.what());
+        return;
+    }
+
+    impl_->connected = true;
+    connected_ = true;
     if (onConnectionStateChanged) onConnectionStateChanged(true);
-    if (type == "offer") sendAnswer();
+    blog(LOG_INFO, "[Ojowacam] Remote description set (libdatachannel): offer");
+#else
+    // No WebRTC backend compiled in: fail honestly — never fabricate an
+    // answer that would fake a working media session.
+    (void)type;
+    (void)sdp;
+    blog(LOG_ERROR,
+         "[Ojowacam] No WebRTC backend compiled (libdatachannel/WebRTC missing); cannot handle offer");
 #endif
 }
 
@@ -676,11 +833,105 @@ void WebRTCTransport::addIceCandidate(const std::string& candidate) {
     blog(LOG_DEBUG, "[Ojowacam] ICE candidate received (Windows)");
     (void)candidate;
 #endif
+#elif defined(OJO_LIBDATACHANNEL)
+    std::shared_ptr<rtc::PeerConnection> pc;
+    {
+        std::lock_guard<std::mutex> lock(impl_->pc_mutex);
+        pc = impl_->peer_connection;
+    }
+    if (pc && !candidate.empty()) {
+        try {
+            pc->addRemoteCandidate(rtc::Candidate(candidate));
+        } catch (const std::exception& e) {
+            blog(LOG_WARNING, "[Ojowacam] addRemoteCandidate failed: %s", e.what());
+        }
+    }
 #else
     (void)candidate;
     blog(LOG_DEBUG, "[Ojowacam] ICE candidate received");
 #endif
 }
+
+#ifdef OJO_LIBDATACHANNEL
+void WebRTCTransport::handleIncomingRtp(
+    const uint8_t* data, size_t size,
+    const std::shared_ptr<std::unique_ptr<RtpDepacketizer>>& depay) {
+    RtpPacketView view;
+    if (!parseRtpPacket(data, size, view)) return;
+
+    auto it = impl_->video_codec_by_pt.find(view.payload_type);
+    if (it != impl_->video_codec_by_pt.end()) {
+        // Video payload: depacketize into complete access units and hand the
+        // codec bitstream to the receiver's decoder pipeline.
+        auto& slot = *depay;
+        if (!slot || slot->codec() != it->second) {
+            slot = std::make_unique<RtpDepacketizer>(it->second);
+        }
+        slot->push(view, [this](const std::vector<uint8_t>& frame_data, uint32_t rtp_ts) {
+            if (!onVideoFrame) return;
+            VideoFrame frame;
+            frame.data = frame_data;
+            frame.timestamp_us = static_cast<int64_t>(rtp_ts) * 1000000LL / 90000LL;
+            frame.format = VideoPixelFormat::Unknown;
+            onVideoFrame(frame);
+        });
+        return;
+    }
+
+    // Not a video payload type: treat as Opus audio from the phone.
+#ifdef OJO_OPUS_ENABLED
+    if (!view.payload || view.payload_size == 0) return;
+    std::lock_guard<std::mutex> lock(impl_->audio_mutex);
+    const int channels = opus_packet_get_nb_channels(view.payload);
+    if (channels <= 0 || channels > 2) return;
+    if (!impl_->opus_decoder || impl_->opus_channels != channels) {
+        if (impl_->opus_decoder) opus_decoder_destroy(impl_->opus_decoder);
+        int err = OPUS_OK;
+        impl_->opus_decoder = opus_decoder_create(48000, channels, &err);
+        if (err != OPUS_OK || !impl_->opus_decoder) {
+            impl_->opus_decoder = nullptr;
+            impl_->opus_channels = 0;
+            return;
+        }
+        impl_->opus_channels = channels;
+    }
+
+    constexpr int kMaxFrameSamples = 5760; // 120 ms @ 48 kHz
+    std::vector<float> pcm(static_cast<size_t>(kMaxFrameSamples) *
+                           static_cast<size_t>(channels));
+    int decoded = opus_decode_float(impl_->opus_decoder,
+                                    view.payload,
+                                    static_cast<opus_int32>(view.payload_size),
+                                    pcm.data(),
+                                    kMaxFrameSamples,
+                                    0);
+    if (decoded < 0) {
+        // Standard Opus packet-loss concealment for a corrupt packet.
+        decoded = opus_decode_float(impl_->opus_decoder, nullptr, 0,
+                                    pcm.data(), kMaxFrameSamples, 0);
+    }
+    if (decoded <= 0) return; // honest drop: never fabricate audio
+
+    pcm.resize(static_cast<size_t>(decoded) * static_cast<size_t>(channels));
+    if (onAudioFrame) {
+        AudioFrame frame;
+        frame.samples = std::move(pcm);
+        frame.sample_rate = 48000;
+        frame.channels = channels;
+        frame.timestamp_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        onAudioFrame(frame);
+    }
+#else
+    static std::atomic<bool> warned_no_opus{false};
+    if (!warned_no_opus.exchange(true)) {
+        blog(LOG_ERROR, "[Ojowacam] Audio RTP dropped: Opus support not built");
+    }
+#endif
+}
+#endif  // OJO_LIBDATACHANNEL
 
 void WebRTCTransport::handleSignalingMessage(const std::string& message) {
     blog(LOG_DEBUG, "[Ojowacam] Signaling message: %s", message.c_str());

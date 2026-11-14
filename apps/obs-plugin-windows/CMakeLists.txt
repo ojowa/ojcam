@@ -107,6 +107,17 @@ add_library(ojowacam-obs MODULE ${PLUGIN_SOURCES})
 
 target_link_libraries(ojowacam-obs PRIVATE ${OBS_LIBRARIES} streaming-core)
 
+# Stage FFmpeg runtime DLLs next to ojowacam-obs.dll so OBS resolves them
+# from the plugin module directory.
+file(GLOB _ojowacam_ffmpeg_dlls "${CMAKE_CURRENT_SOURCE_DIR}/../../.deps/ffmpeg/bin/*.dll")
+if(_ojowacam_ffmpeg_dlls)
+    add_custom_command(TARGET ojowacam-obs POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${_ojowacam_ffmpeg_dlls}
+                $<TARGET_FILE_DIR:ojowacam-obs>
+        COMMENT "Staging FFmpeg runtime DLLs next to ojowacam-obs.dll")
+endif()
+
 # Windows plugin output: ojowacam-obs.dll
 set_target_properties(ojowacam-obs PROPERTIES
     PREFIX ""
