@@ -14,6 +14,8 @@ export interface StreamConfig {
   fps: number;
   bitrate: number;
   codec: string;
+  /** When false, mic capture and the WebRTC audio track are skipped. Defaults to true. */
+  audio?: boolean;
 }
 
 export class CameraService {

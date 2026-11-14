@@ -280,16 +280,20 @@ export class StreamingService {
       const outWidth = capture && capture.width > 0 ? capture.width : this.width;
       const outHeight = capture && capture.height > 0 ? capture.height : this.height;
       console.log(`[stream] capture ok: ${outWidth}x${outHeight}`);
-      console.log('[stream] step: startAudio');
-      await AudioService.startRecording();
+      if (config.audio !== false) {
+        console.log('[stream] step: startAudio');
+        await AudioService.startRecording();
+      }
       console.log('[stream] step: initEncoder');
       await EncoderService.initEncoder(outWidth, outHeight, config.bitrate, config.fps);
       console.log('[stream] step: createPeerConnection');
       await WebRTCService.createPeerConnection(this.iceServers);
       console.log('[stream] step: addVideoTrack');
       await WebRTCService.addVideoTrack('ojowacam-video');
-      console.log('[stream] step: addAudioTrack');
-      await WebRTCService.addAudioTrack('ojowacam-audio');
+      if (config.audio !== false) {
+        console.log('[stream] step: addAudioTrack');
+        await WebRTCService.addAudioTrack('ojowacam-audio');
+      }
       console.log('[stream] step: createOffer');
       await WebRTCService.createOffer();
       console.log('[stream] step: sendStartSession');

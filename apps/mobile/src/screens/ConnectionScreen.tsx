@@ -110,7 +110,7 @@ export default function ConnectionScreen() {
     USBService.on('onUSBConnected', (data) => {
       setIsUsbConnected(true);
     });
-    USBService.on('onUSBDisconnected', () => {
+    USBService.on('onUSBDisconnected', (data) => {
       setIsUsbConnected(false);
     });
   }, []);
@@ -159,7 +159,7 @@ export default function ConnectionScreen() {
           </Text>
           <View style={styles.statusRow}>
             <View style={[styles.statusDot, (serverRunning || peerConnected) && styles.statusDotConnected]} />
-            <Text>
+            <Text style={styles.statusText}>
               {connecting
                 ? 'Starting…'
                 : peerConnected
@@ -212,7 +212,7 @@ export default function ConnectionScreen() {
               <Text style={styles.sectionTitle}>USB Status</Text>
               <View style={styles.statusRow}>
                 <View style={styles.statusDotConnected} />
-                <Text>Connected via USB</Text>
+                <Text style={styles.statusText}>Connected via USB</Text>
               </View>
               <TouchableOpacity style={[styles.button, styles.disconnectButton]} onPress={disconnectUSB}>
                 <Text style={styles.buttonText}>Disconnect USB</Text>
@@ -222,7 +222,7 @@ export default function ConnectionScreen() {
         </>
       )}
 
-      <StatusBar style="auto" />
+      <StatusBar style="light" />
     </ScrollView>
   );
 }
@@ -230,86 +230,99 @@ export default function ConnectionScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#0f1117',
     padding: 20,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: '#161b22',
     borderRadius: 16,
     padding: 20,
     marginBottom: 20,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#212833',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1a1a1a',
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#ffffff',
     marginBottom: 8,
+    letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 15,
+    color: '#8e93a0',
+    lineHeight: 22,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8e93a0',
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    marginBottom: 14,
   },
   modeRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
   },
   optionRow: {
     flex: 1,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#f9f9f9',
+    borderColor: '#30363d',
+    backgroundColor: '#0f1117',
   },
   selectedMode: {
-    borderColor: '#007AFF',
-    backgroundColor: '#e8f4ff',
+    borderColor: '#0a84ff',
+    backgroundColor: 'rgba(10, 132, 255, 0.15)',
   },
   modeText: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 15,
+    color: '#8e93a0',
+    fontWeight: '600',
   },
   modeTextSelected: {
-    color: '#007AFF',
-    fontWeight: '600',
+    color: '#0a84ff',
+    fontWeight: '700',
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    marginBottom: 14,
+  },
+  statusText: {
+    color: '#c9d1d9',
+    fontSize: 15,
+    fontWeight: '600',
   },
   statusDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#eb5757',
   },
   statusDotConnected: {
-    backgroundColor: '#34C759',
+    backgroundColor: '#3fb950',
   },
   button: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#0a84ff',
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     alignItems: 'center',
   },
   disconnectButton: {
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#eb5757',
   },
   buttonText: {
     color: '#fff',
@@ -322,18 +335,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#212833',
   },
   usbDeviceName: {
     fontSize: 16,
-    color: '#1a1a1a',
+    color: '#c9d1d9',
   },
   usbDeviceType: {
     fontSize: 14,
-    color: '#666',
+    color: '#8e93a0',
   },
   emptyText: {
-    color: '#999',
+    color: '#8e93a0',
     fontSize: 14,
     textAlign: 'center',
     paddingVertical: 20,
@@ -342,35 +355,35 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   fieldLabel: {
-    color: '#666',
+    color: '#8e93a0',
     fontSize: 13,
     marginBottom: 6,
   },
   hostInput: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#30363d',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#1a1a1a',
-    backgroundColor: '#f9f9f9',
+    color: '#fff',
+    backgroundColor: '#0f1117',
     marginBottom: 6,
   },
   hostHint: {
-    color: '#888',
+    color: '#8e93a0',
     fontSize: 12,
     marginBottom: 8,
     lineHeight: 16,
   },
   hostUrl: {
-    color: '#007AFF',
-    fontSize: 12,
+    color: '#0a84ff',
+    fontSize: 13,
     marginBottom: 8,
     fontFamily: 'monospace',
   },
   connectionError: {
-    color: '#FF3B30',
+    color: '#ff7b72',
     fontSize: 13,
     marginBottom: 10,
   },
