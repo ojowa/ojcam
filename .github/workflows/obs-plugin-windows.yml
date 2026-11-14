@@ -207,6 +207,9 @@ jobs:
           $inner = Get-ChildItem $extractPath -Directory | Select-Object -First 1
           if (-not $inner) { throw 'FFmpeg archive extraction failed' }
           $dest = Join-Path $env:GITHUB_WORKSPACE '.deps/ffmpeg'
+          # $dest must exist first, otherwise Copy-Item of the first directory
+          # makes $dest *become* that directory instead of $dest\<name>.
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
           foreach ($sub in 'include', 'lib', 'bin') {
             Copy-Item -Recurse -Force (Join-Path $inner.FullName $sub) $dest
           }
