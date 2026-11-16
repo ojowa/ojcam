@@ -147,6 +147,25 @@ obs_properties_t *ojowacam_camera_properties(void *data)
             return true;
         });
 
+    // Deactivate the current device: stop the stream receiver and clear
+    // the stored signaling URL / device ID.
+    obs_properties_add_button(props, "deactivate", "Deactivate Device",
+        ^(obs_properties_t *p, obs_property_t *prop, void *d) {
+            auto *data = static_cast<OjowacamCameraData*>(d);
+            if (data->streamReceiver) {
+                [data->streamReceiver disconnect];
+                data->streamReceiver = nil;
+            }
+            data->connected = NO;
+
+            obs_data_t *settings = obs_source_get_settings(data->source);
+            obs_data_set_string(settings, "signaling_url", "");
+            obs_data_set_string(settings, "device_id", "");
+            obs_source_update(data->source, settings);
+            obs_data_release(settings);
+            return true;
+        });
+
     obs_properties_add_bool(props, "connected", "Connected");
 
     return props;
