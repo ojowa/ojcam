@@ -47,9 +47,9 @@ jobs:
         run: |
           echo "Android native modules exist at apps/mobile/android/"
           ls apps/mobile/android/src/main/java/com/ojowacam/mobile/
-          echo "Building Android APK with Gradle 8.0..."
+          echo "Building Android release APK with Gradle 8.0..."
           sudo apt-get update && sudo apt-get install -y unzip zip
-          cd apps/mobile/android && chmod +x gradlew && ./gradlew assembleDebug
+          cd apps/mobile/android && chmod +x gradlew && ./gradlew assembleRelease
       - name: Decode Android release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -72,8 +72,9 @@ jobs:
       - name: Stage artifacts into publish folder
         run: |
           mkdir -p ci-output/apk/publish ci-output/apk-release/publish ci-output/aab/publish
-          cp apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk ci-output/apk/publish/
+          # Release APK (bundled JS, no Metro dependency) — this is the production artifact
           if [ -f apps/mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk ci-output/apk/publish/
             cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk ci-output/apk-release/publish/
           fi
           if [ -f apps/mobile/android/app/build/outputs/bundle/release/app-release.aab ]; then
