@@ -17,13 +17,34 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
       - name: Install CMake and build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential
+
+      - name: Clone OBS Studio SDK
+        run: |
+          git clone --depth 1 --shallow-submodules --recurse-submodules --branch 30.1.2 https://github.com/obsproject/obs-studio.git obs-studio
+
+      - name: Stage OBS headers and import lib
+        run: |
+          mkdir -p .deps/obs-studio/libobs .deps/obs-lib
+          cp -r obs-studio/libobs .deps/obs-studio/libobs
+          cmake --build obs-studio/build --config Release --target obs 2>/dev/null || true
+          if [ -f obs-studio/build/libobs/libobs.so ]; then
+            cp obs-studio/build/libobs/libobs.so .deps/obs-lib/
+          elif [ -f obs-studio/build/libobs/libobs.a ]; then
+            cp obs-studio/build/libobs/libobs.a .deps/obs-lib/
+          fi
+          if [ ! -f .deps/obs-studio/libobs/obs-module.h ]; then
+            echo "obs-module.h not found after staging"; exit 1
+          fi
+
       - name: Configure CMake
         run: |
-          cd packages/streaming-core && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release
+          cd packages/streaming-core && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE
+
       - name: Build C++ streaming core
         run: |
           cd packages/streaming-core/build && make -j$(nproc)

@@ -6,6 +6,35 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(include)
 
+# Locate OBS Studio headers (needed by webrtc-transport.cpp and video-decoder.cpp)
+set(OBS_FOUND FALSE)
+set(_OBS_HEADER_CANDIDATES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../.deps/obs-studio/libobs"
+    "${CMAKE_SOURCE_DIR}/../../.deps/obs-studio/libobs"
+    "${CMAKE_PREFIX_PATH}/.deps/obs-studio/libobs"
+    "${CMAKE_PREFIX_PATH}/include"
+    "${CMAKE_PREFIX_PATH}/include/obs"
+)
+set(OBS_INCLUDE_DIR "")
+foreach(_p IN LISTS _OBS_HEADER_CANDIDATES)
+    if(EXISTS "${_p}/obs-module.h")
+        set(OBS_INCLUDE_DIR "${_p}")
+        break()
+    endif()
+endforeach()
+
+if(NOT OBS_INCLUDE_DIR)
+    message(FATAL_ERROR
+        "Could not find OBS Studio headers.\n"
+        "  Expected at .deps/obs-studio/libobs/obs-module.h"
+    )
+endif()
+
+set(OBS_INCLUDE_DIRS "${OBS_INCLUDE_DIR}")
+include_directories(${OBS_INCLUDE_DIRS})
+
+message(STATUS "OBS_INCLUDE_DIRS: ${OBS_INCLUDE_DIRS}")
+
 # Source files
 set(SOURCES
     src/transport/webrtc-transport.cpp
