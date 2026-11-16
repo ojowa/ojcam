@@ -327,7 +327,7 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             builder.addTarget(imageReader!!.surface)
             builder.set(CaptureRequest.SCALER_CROP_REGION, calculateCropRegion(characteristics, clampedZoom))
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            captureSession!!.capture(builder.build(), null, null)
+            captureSession!!.setRepeatingRequest(builder.build(), null, null)
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ZOOM_ERROR", e.message, e)
