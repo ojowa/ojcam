@@ -20,10 +20,15 @@
     #include <sys/socket.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
+    #include <sys/time.h>
     #include <unistd.h>
     #define OJO_CLOSE_SOCKET(s) close(s)
     using ojo_udp_socket_t = int;
     #define OJO_INVALID_UDP_SOCKET (-1)
+    // Winsock-only macros used by the shared beacon code paths.
+    #ifndef SOCKET_ERROR
+        #define SOCKET_ERROR (-1)
+    #endif
 #endif
 
 #if defined(__APPLE__)

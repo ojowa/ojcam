@@ -27,7 +27,13 @@ obs_source_info ojowacam_video_source_info = [] {
     info.destroy = ojowacam_video_destroy;
     info.get_width = ojowacam_video_width;
     info.get_height = ojowacam_video_height;
-    info.video_render = ojowacam_video_render;
+    // Deliberately no video_render callback: this is an async source
+    // (OBS_SOURCE_ASYNC_VIDEO). libobs only draws the frames pushed via
+    // obs_source_output_video on the path where video_render is NULL
+    // (obs_source_render_async_video). Registering a callback routes
+    // rendering to obs_source_main_render instead, which calls our
+    // (empty) callback and never touches the async texture — the source
+    // then stays permanently black.
     info.update = ojowacam_video_update;
     info.get_properties = ojowacam_video_properties;
     return info;
@@ -69,14 +75,6 @@ void ojowacam_video_destroy(void *data)
         delete d->frame_converter;
     }
     delete d;
-}
-
-void ojowacam_video_render(void *data, gs_effect_t *effect)
-{
-    // Async sources (OBS_SOURCE_ASYNC_VIDEO) are drawn by libobs from the
-    // frame pushed via obs_source_output_video. No custom draw required.
-    UNUSED_PARAMETER(data);
-    UNUSED_PARAMETER(effect);
 }
 
 uint32_t ojowacam_video_width(void *data)
@@ -174,7 +172,6 @@ obs_properties_t *ojowacam_video_properties(void *data)
             d->stream_receiver = nullptr;
         }
         d->connected = false;
-        d->connected_device.clear();
 
         obs_data_t *settings = obs_source_get_settings(d->source);
         obs_data_set_string(settings, "signaling_url", "");
@@ -195,7 +192,6 @@ obs_properties_t *ojowacam_video_properties(void *data)
         return true;
     });
 
-    obs_properties_add_bool(props, "connected", "Connected");
     obs_properties_add_bool(props, "streaming", "Streaming Active");
 
     obs_properties_add_int(props, "resolution_width", "Width", 1, 7680, 1);

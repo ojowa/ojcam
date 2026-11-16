@@ -14,9 +14,7 @@ struct OjowacamVideoData {
     std::shared_ptr<ojowacam::StreamReceiver> stream_receiver;
     ojowacam::FrameConverter* frame_converter = nullptr;
     gs_texture_t* current_texture = nullptr;
-    bool connected = false;
     bool streaming = false;  // User explicitly started streaming
-    std::string connected_device;
     std::string configured_device_id;
     std::string configured_signaling_url;
     bool configured_auto_discover = false;
@@ -35,7 +33,13 @@ obs_source_info ojowacam_video_source_info = [] {
     info.destroy = ojowacam_video_destroy;
     info.get_width = ojowacam_video_width;
     info.get_height = ojowacam_video_height;
-    info.video_render = ojowacam_video_render;
+    // Deliberately no video_render callback: this is an async source
+    // (OBS_SOURCE_ASYNC_VIDEO). libobs only draws the frames pushed via
+    // obs_source_output_video on the path where video_render is NULL
+    // (obs_source_render_async_video). Registering a callback routes
+    // rendering to obs_source_main_render instead, which calls our
+    // (empty) callback and never touches the async texture — the source
+    // then stays permanently black.
     info.update = ojowacam_video_update;
     info.get_properties = ojowacam_video_properties;
     info.get_defaults = [](obs_data_t *settings) {
@@ -96,14 +100,6 @@ void ojowacam_video_destroy(void *data)
     delete d;
 }
 
-void ojowacam_video_render(void *data, gs_effect_t *effect)
-{
-    // Async sources (OBS_SOURCE_ASYNC_VIDEO) are drawn by libobs from the
-    // frame pushed via obs_source_output_video. No custom draw required.
-    UNUSED_PARAMETER(data);
-    UNUSED_PARAMETER(effect);
-}
-
 uint32_t ojowacam_video_width(void *data)
 {
     auto *d = static_cast<OjowacamVideoData *>(data);
@@ -142,8 +138,6 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
         d->stream_receiver->onVideoSizeChanged = nullptr;
         d->stream_receiver->disconnect();
         d->stream_receiver.reset();
-        d->connected = false;
-        d->connected_device.clear();
     }
 
     // If streaming is on and we don't have a receiver yet, start connecting
@@ -158,20 +152,6 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
                 d->width = w;
                 d->height = h;
             };
-            d->connected = d->stream_receiver->isConnected();
-            if (d->connected) {
-                auto *dm = ojowacam::DeviceManager::GetInstance();
-                auto devices = dm->GetDevices();
-                for (const auto& dev : devices) {
-                    if (dev.device_id == resolved_device_id) {
-                        d->connected_device = dev.device_name + " (" + dev.ip_address + ")";
-                        break;
-                    }
-                }
-                if (d->connected_device.empty()) {
-                    d->connected_device = resolved_signaling_url;
-                }
-            }
         }
     }
 }
@@ -222,7 +202,6 @@ obs_properties_t *ojowacam_video_properties(void *data)
         for (const auto& dev : devices) {
             if (dev.device_id == device_id) {
                 signaling_url = "ws://" + dev.ip_address + ":" + std::to_string(dev.port);
-                d->connected_device = dev.device_name + " (" + dev.ip_address + ")";
                 break;
             }
         }
@@ -243,9 +222,7 @@ obs_properties_t *ojowacam_video_properties(void *data)
             d->stream_receiver->disconnect();
             d->stream_receiver.reset();
         }
-        d->connected = false;
         d->streaming = false;
-        d->connected_device.clear();
 
         obs_data_t *settings = obs_source_get_settings(d->source);
         obs_data_set_string(settings, "signaling_url", "");
@@ -267,16 +244,7 @@ obs_properties_t *ojowacam_video_properties(void *data)
         return true;
     });
 
-    // Read-only: which device this source is currently connected to.
-    std::string connected_label = d->connected_device.empty()
-        ? "Not connected"
-        : ("Connected to: " + d->connected_device);
-    obs_properties_add_text(props, "connected_device", "Connected Device", OBS_TEXT_DEFAULT);
-    obs_property_set_long_description(obs_properties_get(props, "connected_device"),
-        connected_label.c_str());
-
     obs_properties_add_bool(props, "streaming", "Streaming Active");
-    obs_properties_add_bool(props, "connected", "Connected");
     obs_properties_add_float(props, "sample_rate", "Sample Rate (Hz)", 8000.0f, 192000.0f, 1.0f);
     obs_properties_add_int(props, "channels", "Channels", 1, 8, 1);
     obs_properties_add_int(props, "resolution_width", "Width", 1, 7680, 1);

@@ -120,6 +120,8 @@ DroidCam's PC client discovers the phone automatically:
 | `audio_enabled` | bool | true | Whether to also create/pair an audio source |
 | `connection_status` | readonly text | "Disconnected"/"Connected" | Visual feedback like DroidCam's client UI |
 
+> **Note:** a read-only "Connected Device"/"Connected" status block was implemented and then removed — it never reflected real state usefully and only added clutter. Don't reintroduce it without a concrete need.
+
 ---
 
 ## 5. Connection & Streaming Lifecycle
@@ -157,9 +159,9 @@ DroidCam offers **two connection modes**:
 - `StreamReceiver::Impl::video_decoder->onFrameDecoded` has a TODO to push to OBS video source.
 - macOS `camera-source.mm` `ojowacam_camera_render()` has a TODO to convert `CVPixelBuffer` to OBS texture.
 
-### Implementation pattern
-1. Decoded `VideoFrame` → `StreamSynchronizer` → `FrameConverter::convertToTexture()` → `gs_texture_t*`
-2. In `ojowacam_video_render()`, bind the texture via `gs_effect_set_texture(image, texture)` and `gs_draw_sprite()`.
+### Implementation pattern (async video — what `video-source.cpp` uses)
+1. Decoded `VideoFrame` → `FrameConverter::convertToRgba()` → `obs_source_output_video()` on the source (see `StreamReceiver::pushVideoFrameToOBS`).
+2. **Do not register a `video_render` callback.** For an `OBS_SOURCE_ASYNC_VIDEO` source libobs draws the queued frames itself, but only on the path it takes when `video_render` is `NULL` (`obs_source_render_async_video`). Registering a callback routes rendering to `obs_source_main_render` → your callback instead, the async texture is never drawn, and the source stays permanently black. (If you really want a `video_render` callback on an async source, you must draw the current frame yourself with `obs_source_get_frame()` / `obs_source_release_frame()`.)
 3. On macOS, convert `CVPixelBufferRef` → `CIImage` → `CGImage` → `NSImage` → OBS texture (partial implementation exists in `stream-receiver.mm`).
 
 ### DroidCam precedent
