@@ -53,7 +53,8 @@ export default function CameraScreen() {
   const cameraRef = React.useRef<Camera>(null);
 
   // Digital camera controls
-  const [zoomLevel, setZoomLevel] = React.useState<ZoomLevel>(1);
+  const [zoomLevel, setZoomLevel] = React.useState<number>(1.0);
+  const [maxZoom, setMaxZoom] = React.useState<number>(4.0);
   const [focusMode, setFocusMode] = React.useState<FocusMode>('continuousAutoFocus');
   const [whiteBalance, setWhiteBalance] = React.useState<WhiteBalance>('auto');
   const [gridOverlay, setGridOverlay] = React.useState(false);
@@ -61,7 +62,7 @@ export default function CameraScreen() {
   const [timerSeconds, setTimerSeconds] = React.useState(3);
   const [focusPoint, setFocusPoint] = React.useState<{ x: number; y: number } | null>(null);
   const [isPinchZooming, setIsPinchZooming] = React.useState(false);
-  const [pinchStartZoom, setPinchStartZoom] = React.useState<ZoomLevel>(1);
+  const [pinchStartZoom, setPinchStartZoom] = React.useState<number>(1.0);
 
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
@@ -111,10 +112,9 @@ export default function CameraScreen() {
           if (focusPoint) setFocusPoint(null);
         },
         onPanResponderMove: (_, gestureState) => {
-          if (Math.abs(gestureState.dy) > 40 && !isPinchZooming) {
-            const next = (zoomLevel % 3) + 1 as ZoomLevel;
-            setZoomLevel(next);
-          }
+          // Vertical drag smoothly changes zoom level (negative dy = zoom in)
+          const delta = -gestureState.dy / 100;
+          setZoomLevel((prev) => Math.min(maxZoom, Math.max(1.0, pinchStartZoom + delta)));
         },
         onPanResponderRelease: () => {
           setIsPinchZooming(false);
@@ -177,10 +177,15 @@ export default function CameraScreen() {
     if (next) setSelectedCamera(next.id);
   };
 
-  const handleZoomChange = (level: ZoomLevel) => {
-    setZoomLevel(level);
+  const handleZoomChange = (delta: number) => {
+    setZoomLevel((prev) => Math.min(maxZoom, Math.max(1.0, prev + delta)));
     setIsPinchZooming(false);
   };
+
+  // Apply zoom changes to the camera hardware.
+  React.useEffect(() => {
+    void CameraService.setZoom(zoomLevel).catch(() => undefined);
+  }, [zoomLevel]);
 
   const handleFocusModeChange = (mode: FocusMode) => {
     setFocusMode(mode);
@@ -287,14 +292,12 @@ export default function CameraScreen() {
 
         {/* Zoom indicator */}
         <View style={[styles.zoomIndicator, isLandscape && styles.zoomIndicatorLandscape]}>
-          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(1)}>
-            <Text style={styles.zoomText}>1×</Text>
+          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(-0.5)}>
+            <Text style={styles.zoomText}>−</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(2)}>
-            <Text style={[styles.zoomText, zoomLevel === 2 && styles.zoomActive]}>2×</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(3)}>
-            <Text style={[styles.zoomText, zoomLevel === 3 && styles.zoomActive]}>3×</Text>
+          <Text style={styles.zoomText}>{zoomLevel.toFixed(1)}×</Text>
+          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(0.5)}>
+            <Text style={styles.zoomText}>+</Text>
           </TouchableOpacity>
         </View>
       </View>
