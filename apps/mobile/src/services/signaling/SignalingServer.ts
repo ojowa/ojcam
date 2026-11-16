@@ -30,7 +30,7 @@ export interface TransportState {
   attemptCount: number;
   queuedMessages: number;
 }
-export type TransportMessageHandler = (data: string, peer?: TcpSocketLike) => void;
+export type TransportMessageHandler = (data: string) => void;
 export type TransportStateHandler = (state: TransportState) => void;
 export type TransportErrorHandler = (error: Error) => void;
 
@@ -241,24 +241,15 @@ interface TcpSocketModule {
   createConnection(options: { host: string; port: number }, onConnect?: () => void): TcpSocketLike;
 }
 
-/** Role of a connected peer: the camera video stream or the Wireless Mic. */
+/** Role of a connected peer: unused on the single-phone connection today. */
 export type PeerRole = 'video' | 'mic' | 'unknown';
-
-interface PeerState {
-  /** True when the phone dialed out to the plugin (client-mode framing). */
-  outbound: boolean;
-  handshaken: boolean;
-  role: PeerRole;
-  parser: WsFrameParser;
-  handshakeBuf: Uint8Array;
-}
 
 export class SignalingServer {
   private config: TransportConfig;
   private server: TcpServerLike | null = null;
-  // Every connected peer: the OBS plugin opens one connection for the camera
-  // video stream and an independent one for the Wireless Microphone.
-  private peers = new Map<TcpSocketLike, PeerState>();
+  // The OBS plugin opens a single signaling connection per phone; camera
+  // video (WebRTC media) arrives over it.
+  private peer: TcpSocketLike | null = null;
   private parser = new WsFrameParser();
   private handshakeBuf: Uint8Array = new Uint8Array(0);
   private handshaken = false;
@@ -314,37 +305,7 @@ export class SignalingServer {
   isConnected(): boolean {
     return this.state.connected;
   }
-  /**
-   * The peer that carries the camera video stream (offer/answer/ICE): the
-   * first connected peer that did not claim the Wireless Microphone role.
-   */
-  private primaryPeer(): TcpSocketLike | null {
-    let fallback: TcpSocketLike | null = null;
-    for (const [socket, state] of this.peers) {
-      if (!state.handshaken) continue;
-      if (!fallback) fallback = socket;
-      if (state.role !== 'mic') return socket;
-    }
-    return fallback;
-  }
-
-  /** Peers that asked for the Wireless Microphone stream. */
-  private micPeers(): TcpSocketLike[] {
-    const result: TcpSocketLike[] = [];
-    for (const [socket, state] of this.peers) {
-      if (state.handshaken && state.role === 'mic') result.push(socket);
-    }
-    return result;
-  }
-
-  /** Remember which stream a peer is interested in. */
-  setPeerRole(socket: TcpSocketLike | undefined, role: PeerRole): void {
-    if (!socket) return;
-    const state = this.peers.get(socket);
-    if (!state || state.role === role) return;
-    state.role = role;
-  }
-
+  /** True once a peer completed the WebSocket handshake. */
   hasPeer(): boolean {
     return this.isReady();
   }
@@ -401,17 +362,15 @@ export class SignalingServer {
     beaconDiscovery.stop();
     this.obsTarget = null;
     this.dialing = false;
-    const peers = [...this.peers.keys()];
-    this.peers.clear();
+    const peer = this.peer;
+    this.peer = null;
     this.handshaken = false;
     this.peerOutbound = false;
     this.outboundKey = '';
-    for (const peer of peers) {
-      try {
-        peer.destroy();
-      } catch {
-        /* already closed */
-      }
+    try {
+      peer?.destroy();
+    } catch {
+      /* already closed */
     }
     const server = this.server;
     this.server = null;
@@ -467,7 +426,7 @@ export class SignalingServer {
       socket = TcpSocket.createConnection({ host: target.ip, port: target.port }, () => {
         this.dialing = false;
         // Inbound won the race while this dial was in flight — drop the dial.
-        if (this.peers.size > 0) {
+        if (this.peer) {
           try {
             socket.destroy();
           } catch {
@@ -490,7 +449,7 @@ export class SignalingServer {
     }
     socket.on('error', (err: unknown) => {
       this.dialing = false;
-      if (this.peers.has(socket)) {
+      if (this.peer === socket) {
         this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
         this.dropPeer(socket);
       }
@@ -498,70 +457,18 @@ export class SignalingServer {
     socket.on('close', () => this.onPeerClosed(socket));
   }
 
-  /** Send to the peer that carries the camera video stream. */
   send(data: string): boolean {
-    const peer = this.primaryPeer();
-    if (!peer) {
+    if (!this.isReady() || !this.peer) {
       this.enqueue(data);
       return false;
     }
-    return this.writeTo(peer, data);
-  }
-
-  /** Send to one specific peer (e.g. the answer to its request). */
-  sendToPeer(socket: TcpSocketLike | undefined, data: string): boolean {
-    if (!socket) return false;
-    return this.writeTo(socket, data);
-  }
-
-  /** Send to every connected peer (pairing offers, announcements, pings). */
-  sendToAll(data: string): boolean {
-    const targets = [...this.peers.entries()].filter(([, state]) => state.handshaken);
-    if (targets.length === 0) {
-      this.enqueue(data);
-      return false;
-    }
-    let sent = false;
-    for (const [socket] of targets) {
-      if (this.writeTo(socket, data)) sent = true;
-    }
-    return sent;
-  }
-
-  private writeTo(socket: TcpSocketLike, data: string): boolean {
-    const state = this.peers.get(socket);
-    if (!state || !state.handshaken) return false;
     try {
-      socket.write(this.frame(data, state));
+      this.peer.write(this.frame(data));
       return true;
     } catch {
+      this.enqueue(data);
       return false;
     }
-  }
-
-  /**
-   * Send a raw binary frame (opcode 0x2), used for Wireless Mic PCM chunks.
-   * The chunks go to the peers that claimed the Wireless Microphone role;
-   * without such a peer they fall back to the video peer. Realtime audio is
-   * dropped (not queued) when no peer is ready — stale mic data must never
-   * play back late.
-   */
-  sendBinary(data: Uint8Array): boolean {
-    const micPeers = this.micPeers();
-    const targets = micPeers.length > 0 ? micPeers : this.primaryPeer() ? [this.primaryPeer() as TcpSocketLike] : [];
-    if (targets.length === 0) return false;
-    let sent = false;
-    for (const socket of targets) {
-      const state = this.peers.get(socket);
-      if (!state || !state.handshaken) continue;
-      try {
-        socket.write(this.frameBytes(data, state));
-        sent = true;
-      } catch {
-        /* peer gone: the chunk is dropped */
-      }
-    }
-    return sent;
   }
 
   async sendReliable(data: string): Promise<boolean> {
@@ -583,18 +490,12 @@ export class SignalingServer {
   }
 
   private isReady(): boolean {
-    return this.state.connected && this.primaryPeer() !== null;
+    return this.state.connected && this.handshaken && this.peer !== null;
   }
 
-  /** Frame for one peer: masked when we dialed out (client mode). */
-  private frame(payload: string, state?: PeerState, opcode = 0x1): Uint8Array {
-    const outbound = state ? state.outbound : this.peerOutbound;
-    return outbound ? encodeClientFrame(payload, opcode) : encodeServerFrame(payload, opcode);
-  }
-
-  private frameBytes(data: Uint8Array, state?: PeerState, opcode = 0x2): Uint8Array {
-    const outbound = state ? state.outbound : this.peerOutbound;
-    return outbound ? encodeClientFrameBytes(data, opcode) : encodeServerFrameBytes(data, opcode);
+  /** Frame for the CURRENT peer: masked when we dialed out (client mode). */
+  private frame(payload: string, opcode = 0x1): Uint8Array {
+    return this.peerOutbound ? encodeClientFrame(payload, opcode) : encodeServerFrame(payload, opcode);
   }
 
   // -------------------------------------------------------------------------
@@ -602,60 +503,62 @@ export class SignalingServer {
   // -------------------------------------------------------------------------
 
   private onConnection(socket: TcpSocketLike): void {
-    // Inbound wins the race: a new OBS connection replaces the phone's own
-    // dial-out (prefer listening server mode so the plugin's preferred
-    // outbound dial converges on this socket). Additional plugin connections
-    // are kept: the Wireless Microphone uses its own connection.
-    for (const [existing, state] of [...this.peers]) {
-      if (!state.outbound) continue;
-      this.peers.delete(existing);
-      try {
-        existing.destroy();
-      } catch {
-        /* already closed */
-      }
-    }
+    // Inbound wins the race: a new OBS connection replaces whatever is
+    // active, including a phone-initiated dial-out (prefer listening server
+    // mode so the plugin's preferred outbound dial converges on this socket).
     this.attachPeer(socket, false);
   }
 
   private attachPeer(socket: TcpSocketLike, outbound: boolean): void {
-    this.peers.set(socket, {
-      outbound,
-      handshaken: false,
-      role: 'unknown',
-      parser: new WsFrameParser(),
-      handshakeBuf: new Uint8Array(0),
-    });
+    const previous = this.peer;
+    this.peer = null;
+    if (previous) {
+      const wasConnected = this.state.connected;
+      this.stopHeartbeat();
+      this.state.connected = false;
+      this.handshaken = false;
+      try {
+        previous.destroy();
+      } catch {
+        /* already closed */
+      }
+      if (wasConnected) this.notifyStateChange();
+    }
+
+    this.peer = socket;
+    this.peerOutbound = outbound;
     if (!outbound) this.outboundKey = '';
+    this.parser = new WsFrameParser();
+    this.handshakeBuf = new Uint8Array(0);
+    this.handshaken = false;
 
     socket.on('data', (data: unknown) => this.onData(socket, data));
     socket.on('close', () => this.onPeerClosed(socket));
     socket.on('error', (err: unknown) => {
-      if (!this.peers.has(socket)) return;
+      if (this.peer !== socket) return;
       this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
     });
   }
 
   private onData(socket: TcpSocketLike, data: unknown): void {
-    const state = this.peers.get(socket);
-    if (!state) return;
+    if (this.peer !== socket) return;
     const bytes = toBytes(data);
     if (!bytes) return;
 
-    if (!state.handshaken) {
-      state.handshakeBuf = concatBytes(state.handshakeBuf, bytes);
-      if (state.handshakeBuf.length > MAX_HANDSHAKE_BYTES) {
+    if (!this.handshaken) {
+      this.handshakeBuf = concatBytes(this.handshakeBuf, bytes);
+      if (this.handshakeBuf.length > MAX_HANDSHAKE_BYTES) {
         this.dropPeer(socket);
         return;
       }
-      const headerEnd = indexOfHeaderEnd(state.handshakeBuf);
+      const headerEnd = indexOfHeaderEnd(this.handshakeBuf);
       if (headerEnd < 0) return;
 
-      if (state.outbound) {
+      if (this.peerOutbound) {
         // Phone-dial-out: verify the plugin's 101 response before any frames.
-        const headerText = bytesToLatin1(state.handshakeBuf.subarray(0, headerEnd));
-        const remainder = state.handshakeBuf.slice(headerEnd + 4);
-        state.handshakeBuf = new Uint8Array(0);
+        const headerText = bytesToLatin1(this.handshakeBuf.subarray(0, headerEnd));
+        const remainder = this.handshakeBuf.slice(headerEnd + 4);
+        this.handshakeBuf = new Uint8Array(0);
         const accepted =
           /^HTTP\/1\.1 101/.test(headerText) &&
           verifyHandshakeAccept(headerText, this.outboundKey);
@@ -663,13 +566,13 @@ export class SignalingServer {
           this.dropPeer(socket);
           return;
         }
-        state.handshaken = true;
+        this.handshaken = true;
         this.markConnected();
         if (remainder.length > 0) this.dispatchFrames(socket, remainder);
         return;
       }
 
-      const headerText = bytesToLatin1(state.handshakeBuf.subarray(0, headerEnd));
+      const headerText = bytesToLatin1(this.handshakeBuf.subarray(0, headerEnd));
       const keyMatch = /sec-websocket-key:\s*([^\s]+)/i.exec(headerText);
       if (!keyMatch) {
         try {
@@ -688,9 +591,9 @@ export class SignalingServer {
         return;
       }
 
-      const remainder = state.handshakeBuf.slice(headerEnd + 4);
-      state.handshakeBuf = new Uint8Array(0);
-      state.handshaken = true;
+      const remainder = this.handshakeBuf.slice(headerEnd + 4);
+      this.handshakeBuf = new Uint8Array(0);
+      this.handshaken = true;
       this.markConnected();
       if (remainder.length > 0) this.dispatchFrames(socket, remainder);
       return;
@@ -700,22 +603,21 @@ export class SignalingServer {
   }
 
   private dispatchFrames(socket: TcpSocketLike, bytes: Uint8Array): void {
-    const state = this.peers.get(socket);
-    if (!state) return;
+    if (this.peer !== socket) return;
     let frames: WsFrame[];
     try {
-      frames = state.parser.push(bytes);
+      frames = this.parser.push(bytes);
     } catch (error) {
       this.handlers.onError?.(error instanceof Error ? error : new Error(String(error)));
       this.dropPeer(socket);
       return;
     }
     for (const frame of frames) {
-      if (!this.peers.has(socket)) return;
+      if (this.peer !== socket) return;
       switch (frame.opcode) {
         case 0x8: // close
           try {
-            socket.write(this.frame('', state, 0x8));
+            socket.write(this.frame('', 0x8));
           } catch {
             /* best effort */
           }
@@ -723,7 +625,7 @@ export class SignalingServer {
           return;
         case 0x9: // ping → pong
           try {
-            socket.write(this.frame(utf8Decode(frame.payload), state, 0xa));
+            socket.write(this.frame(utf8Decode(frame.payload), 0xa));
           } catch {
             /* best effort */
           }
@@ -735,7 +637,7 @@ export class SignalingServer {
         case 0x0: {
           const text = utf8Decode(frame.payload);
           this.notePong(text);
-          this.handlers.onMessage?.(text, socket);
+          this.handlers.onMessage?.(text);
           break;
         }
         default:
@@ -764,23 +666,25 @@ export class SignalingServer {
   }
 
   private onPeerClosed(socket: TcpSocketLike): void {
-    if (!this.peers.has(socket)) return;
-    this.peers.delete(socket);
+    if (this.peer !== socket) return;
+    this.peer = null;
+    this.handshaken = false;
     this.stopHeartbeat();
-    this.state.connected = this.peers.size > 0;
+    this.state.connected = false;
     this.notifyStateChange();
   }
 
   private dropPeer(socket: TcpSocketLike): void {
-    if (!this.peers.has(socket)) return;
-    this.peers.delete(socket);
+    if (this.peer !== socket) return;
+    this.peer = null;
+    this.handshaken = false;
     this.stopHeartbeat();
     try {
       socket.destroy();
     } catch {
       /* already closed */
     }
-    this.state.connected = this.peers.size > 0;
+    this.state.connected = false;
     this.notifyStateChange();
   }
 
@@ -792,25 +696,22 @@ export class SignalingServer {
     this.stopHeartbeat();
     this.lastPongTime = Date.now();
     this.heartbeatIntervalId = setInterval(() => {
-      const peer = this.primaryPeer();
-      if (!peer || !this.isReady()) return;
+      if (!this.isReady() || !this.peer) return;
       if (Date.now() - this.lastPongTime > this.config.heartbeatIntervalMs + this.config.heartbeatTimeoutMs) {
-        this.dropPeer(peer);
+        this.dropPeer(this.peer);
         return;
       }
-      const state = this.peers.get(peer);
-      if (!state) return;
       try {
-        peer.write(this.frame(JSON.stringify({ type: 'PING' }), state));
+        this.peer.write(this.frame(JSON.stringify({ type: 'PING' })));
       } catch {
-        this.dropPeer(peer);
+        this.dropPeer(this.peer);
         return;
       }
       if (this.heartbeatTimeoutId) clearTimeout(this.heartbeatTimeoutId);
       this.heartbeatTimeoutId = setTimeout(() => {
-        if (!this.isReady()) return;
+        if (!this.isReady() || !this.peer) return;
         if (Date.now() - this.lastPongTime > this.config.heartbeatIntervalMs + this.config.heartbeatTimeoutMs) {
-          this.dropPeer(peer);
+          this.dropPeer(this.peer);
         }
       }, this.config.heartbeatTimeoutMs);
     }, this.config.heartbeatIntervalMs);
@@ -831,12 +732,15 @@ export class SignalingServer {
   }
 
   private flushQueue(): void {
-    const peer = this.primaryPeer();
-    if (!peer || !this.isReady()) return;
+    if (!this.isReady() || !this.peer) return;
     while (this.messageQueue.length > 0) {
       const message = this.messageQueue[0];
-      if (!this.writeTo(peer, message)) break;
-      this.messageQueue.shift();
+      try {
+        this.peer.write(this.frame(message));
+        this.messageQueue.shift();
+      } catch {
+        break;
+      }
     }
     this.state.queuedMessages = this.messageQueue.length;
     this.notifyStateChange();

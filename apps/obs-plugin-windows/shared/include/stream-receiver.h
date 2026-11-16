@@ -15,10 +15,7 @@ namespace ojowacam {
 
 class StreamReceiver {
 public:
-    // purpose distinguishes independent streams: "video" (camera stream) or
-    // "mic" (Wireless Microphone stream).
-    StreamReceiver(obs_source_t* video_source, obs_source_t* audio_source,
-                   const std::string& purpose = "video");
+    StreamReceiver(obs_source_t* video_source, obs_source_t* audio_source);
     ~StreamReceiver();
 
     // auto_discover: keep a same-network discovery listener (UDP beacons +

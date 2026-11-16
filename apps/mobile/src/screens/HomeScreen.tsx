@@ -39,9 +39,6 @@ export default function HomeScreen() {
         <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Camera')}>
           <Text style={styles.buttonText}>Start Camera</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Audio')}>
-          <Text style={styles.buttonText}>Wireless Mic</Text>
-        </TouchableOpacity>
         <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Connection')}>
           <Text style={styles.buttonText}>Connect to OBS</Text>
         </TouchableOpacity>

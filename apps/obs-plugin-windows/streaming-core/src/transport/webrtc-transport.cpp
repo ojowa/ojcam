@@ -173,9 +173,14 @@ public:
         role_ = Role::Dial;
         std::string host, path;
         int port = 80;
-        size_t pos = url.find("://");
+        std::string normalized = url;
+        // Accept bare "host:port" as shorthand for ws://host:port.
+        if (normalized.find("://") == std::string::npos) {
+            normalized = "ws://" + normalized;
+        }
+        size_t pos = normalized.find("://");
         if (pos == std::string::npos) return false;
-        std::string rest = url.substr(pos + 3);
+        std::string rest = normalized.substr(pos + 3);
         size_t slash = rest.find('/');
         if (slash != std::string::npos) {
             host = rest.substr(0, slash);
@@ -589,10 +594,6 @@ struct WebRTCTransport::Impl {
     std::map<int, std::string> video_codec_by_pt;
     std::string negotiated_video_codec;
 
-    // When this transport carries the Wireless Microphone stream, it tells
-    // the phone (role=mic) and asks for the mic PCM broadcast once paired.
-    bool wireless_mic = false;
-
     // Opus audio decoding (guarded by audio_mutex)
     std::mutex audio_mutex;
 #ifdef OJO_OPUS_ENABLED
@@ -649,22 +650,6 @@ void WebRTCTransport::setConnectionOptions(bool auto_discover) {
     host_->auto_discover.store(auto_discover, std::memory_order_release);
 }
 
-void WebRTCTransport::setRequestsWirelessMic(bool wireless_mic) {
-    impl_->wireless_mic = wireless_mic;
-}
-
-#if defined(OJO_LIBDATACHANNEL)
-void WebRTCTransport::declareRole() {
-    if (!impl_->signaling) return;
-    std::ostringstream msg;
-    msg << "{\"type\":\"ROLE\",\"role\":\"" << (impl_->wireless_mic ? "mic" : "video") << "\"}";
-    impl_->signaling->sendMessage(msg.str());
-    blog(LOG_INFO, "[Ojowacam] Declared role %s to the phone", impl_->wireless_mic ? "mic" : "video");
-}
-#else
-void WebRTCTransport::declareRole() {}
-#endif
-
 bool WebRTCTransport::connect(const std::string& url) {
     // Serializes against inbound accepts and other connect() callers
     // (reconnect worker, discovery callback).
@@ -716,7 +701,6 @@ bool WebRTCTransport::connect(const std::string& url) {
         // The phone is the offerer and speaks first (PAIRING_REQUEST/OFFER/
         // PING); OBS only answers. No join message is sent.
         markSessionActive("outbound dial");
-        declareRole();
         return true;
     }
 
@@ -758,7 +742,6 @@ bool WebRTCTransport::tryAcceptInbound(uintptr_t socket_handle) {
     }
     blog(LOG_INFO, "[Ojowacam] Signaling connection from the phone accepted");
     markSessionActive("inbound dial");
-    declareRole();
     return true;
 }
 
@@ -938,19 +921,7 @@ void WebRTCTransport::handlePairingRequest(const std::string& message) {
         << ",\"deviceId\":\"" << escapeJson(device_id) << "\""
         << ",\"sessionToken\":\"" << escapeJson(token) << "\"}";
     if (impl_->signaling) impl_->signaling->sendMessage(msg.str());
-    blog(LOG_INFO, "[Ojowacam] Session established with device %s (wireless_mic=%d)",
-         device_id.c_str(), impl_->wireless_mic ? 1 : 0);
-
-    if (impl_->wireless_mic && impl_->signaling) {
-        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                std::chrono::system_clock::now().time_since_epoch())
-                                .count();
-        std::ostringstream mic_msg;
-        mic_msg << "{\"type\":\"MIC_REQUEST\",\"sessionToken\":\"" << escapeJson(token)
-                << "\",\"timestamp\":" << now_ms << "}";
-        impl_->signaling->sendMessage(mic_msg.str());
-        blog(LOG_INFO, "[Ojowacam] Requested the Wireless Microphone stream from the phone");
-    }
+    blog(LOG_INFO, "[Ojowacam] Session established with device %s", device_id.c_str());
 }
 
 void WebRTCTransport::setRemoteDescription(const std::string& type, const std::string& sdp) {
@@ -1090,6 +1061,9 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
     // to the right depacketizer, and tell the receiver which decoder to prepare
     // before the first frame arrives.
     {
+        std::string sdp_log = sdp;
+        if (sdp_log.size() > 1000) sdp_log.resize(1000);
+        blog(LOG_INFO, "[Ojowacam] Offer SDP: %s", sdp_log.c_str());
         std::map<int, std::string> pt_map;
         const std::string codec = parseSdpVideoCodecs(sdp, pt_map);
         if (!pt_map.empty()) {
@@ -1141,6 +1115,12 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
                     std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
                     impl_->local_sdp = std::string(*desc);
                 }
+                std::string sdp_log;
+                {
+                    std::lock_guard<std::mutex> lock(impl_->sdp_mutex);
+                    sdp_log = impl_->local_sdp;
+                }
+                blog(LOG_INFO, "[Ojowacam] Answer SDP: %s", sdp_log.c_str());
                 sendAnswer();
             });
 

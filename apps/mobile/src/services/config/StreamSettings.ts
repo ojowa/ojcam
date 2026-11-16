@@ -1,4 +1,4 @@
-/**
+﻿/**
  * StreamSettings.ts
  *
  * Persisted streaming preferences: resolution, framerate, microphone, and
@@ -19,10 +19,6 @@ interface StoredSettings {
   fps: StreamFps;
   audioEnabled: boolean;
   autoFocus: boolean;
-  /** Wireless Mic: platform noise suppressor on/off. */
-  noiseSuppression: boolean;
-  /** Wireless Mic: linear mic gain, 1.0 (unity) .. 4.0. */
-  gainBoost: number;
 }
 
 const VALID_RESOLUTIONS: readonly StreamResolution[] = ['3840x2160', '1920x1080', '1280x720'];
@@ -32,12 +28,8 @@ const DEFAULTS: StoredSettings = {
   fps: 30,
   audioEnabled: true,
   autoFocus: true,
-  noiseSuppression: true,
-  gainBoost: 1.0,
 };
 
-const MIN_GAIN = 1.0;
-const MAX_GAIN = 4.0;
 
 export class StreamSettings {
   private settings: StoredSettings = { ...DEFAULTS };
@@ -60,12 +52,6 @@ export class StreamSettings {
         }
         if (typeof parsed.autoFocus === 'boolean') {
           this.settings.autoFocus = parsed.autoFocus;
-        }
-        if (typeof parsed.noiseSuppression === 'boolean') {
-          this.settings.noiseSuppression = parsed.noiseSuppression;
-        }
-        if (typeof parsed.gainBoost === 'number' && Number.isFinite(parsed.gainBoost)) {
-          this.settings.gainBoost = Math.min(MAX_GAIN, Math.max(MIN_GAIN, parsed.gainBoost));
         }
       }
     } catch {
@@ -90,13 +76,6 @@ export class StreamSettings {
     return this.settings.autoFocus;
   }
 
-  isNoiseSuppressionEnabled(): boolean {
-    return this.settings.noiseSuppression;
-  }
-
-  getGainBoost(): number {
-    return this.settings.gainBoost;
-  }
 
   getResolutionLabel(): ResolutionLabel {
     switch (this.settings.resolution) {
@@ -156,18 +135,7 @@ export class StreamSettings {
     await this.persist();
   }
 
-  async setNoiseSuppression(enabled: boolean): Promise<void> {
-    this.settings.noiseSuppression = enabled;
-    this.loaded = true;
-    await this.persist();
-  }
-
-  async setGainBoost(gain: number): Promise<void> {
-    if (!Number.isFinite(gain)) return;
-    this.settings.gainBoost = Math.min(MAX_GAIN, Math.max(MIN_GAIN, gain));
-    this.loaded = true;
-    await this.persist();
-  }
 }
 
 export const streamSettings = new StreamSettings();
+

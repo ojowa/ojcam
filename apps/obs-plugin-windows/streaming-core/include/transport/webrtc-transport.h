@@ -21,11 +21,6 @@ public:
     // The plugin's own WebSocket server (kPluginWsPort) always starts with
     // connect() so the phone can dial in regardless of these options.
     void setConnectionOptions(bool auto_discover);
-    /** Mark this transport as the Wireless Microphone stream: it identifies
-     * itself to the phone (role=mic) and requests the mic PCM broadcast. */
-    void setRequestsWirelessMic(bool wireless_mic);
-    // Tells the phone which stream this connection carries (video or mic).
-    void declareRole();
 
     bool connect(const std::string& url) override;
     void disconnect() override;

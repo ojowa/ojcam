@@ -72,12 +72,13 @@ export default function CameraScreen() {
   const [focusPoint, setFocusPoint] = React.useState<{ x: number; y: number } | null>(null);
   const [isPinchZooming, setIsPinchZooming] = React.useState(false);
   const [pinchStartZoom, setPinchStartZoom] = React.useState<ZoomLevel>(1);
-  const [isCapturing, setIsCapturing] = React.useState(false);
 
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
-  // Reflect the actual orientation on mount (the app starts unlocked).
+  // Reflect the actual orientation on mount (used by the orientation lock toggle).
+  // Layout responsiveness is driven by useWindowDimensions (isLandscape), which
+  // updates automatically on rotation.
   React.useEffect(() => {
     ScreenOrientation.getOrientationAsync()
       .then((o) => {
@@ -297,14 +298,6 @@ export default function CameraScreen() {
     }, 1000);
   };
 
-  const handleShutterPress = async () => {
-    if (isCapturing || nativeCapture || isStreaming) return;
-    setIsCapturing(true);
-    setFocusPoint(null);
-    // Brief shutter flash animation
-    setTimeout(() => setIsCapturing(false), 300);
-  };
-
   React.useEffect(() => {
     loadCameras();
   }, []);
@@ -389,7 +382,7 @@ export default function CameraScreen() {
 
         {/* Zoom indicator */}
         {!nativeCapture && (
-          <View style={styles.zoomIndicator}>
+          <View style={[styles.zoomIndicator, isLandscape && styles.zoomIndicatorLandscape]}>
             <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(1)}>
               <Text style={styles.zoomText}>1×</Text>
             </TouchableOpacity>
@@ -423,7 +416,15 @@ export default function CameraScreen() {
         </View>
       </SafeAreaView>
 
-      <View style={[styles.infoCard, isLandscape && styles.infoCardLandscape]} pointerEvents="none">
+      <View
+        style={[
+          styles.infoCard,
+          isLandscape
+            ? { ...styles.infoCardLandscape, alignSelf: 'flex-start', left: 16, top: 12 }
+            : {},
+        ]}
+        pointerEvents="none"
+      >
         <Text style={styles.infoLabel}>OUT: {qualityLabel} @ {qualityFps}fps</Text>
         <Text style={styles.infoValue}>OBS Target: {obsTarget || 'ws://…'}</Text>
       </View>
@@ -434,43 +435,68 @@ export default function CameraScreen() {
         </View>
       ) : null}
 
-      {/* Digital camera control bar */}
-      <View style={[styles.bottomBar, isLandscape && styles.bottomBarLandscape]}>
-        <TouchableOpacity style={styles.controlButton} onPress={() => setTorch(!torch)}>
-          <Text style={styles.controlIcon}>{torch ? '⚡' : '🔌'}</Text>
-          <Text style={styles.controlText}>Flash</Text>
-        </TouchableOpacity>
+      {/* Digital camera control bar. In landscape it becomes a vertical strip on
+       * the right edge so the preview keeps maximum width. */}
+      {isLandscape ? (
+        <View style={styles.bottomBarLandscape}>
+          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={() => setTorch(!torch)}>
+            <Text style={[styles.controlIcon, styles.controlIconLandscape]}>{torch ? '⚡' : '🔌'}</Text>
+            <Text style={[styles.controlText, styles.controlTextLandscape]}>Flash</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={toggleGrid}>
+            <Text style={[styles.controlIcon, styles.controlIconLandscape]}>{gridOverlay ? '🟰' : '📐'}</Text>
+            <Text style={[styles.controlText, styles.controlTextLandscape]}>Grid</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={startTimer}>
+            <Text style={[styles.controlIcon, styles.controlIconLandscape]}>⏱</Text>
+            <Text style={[styles.controlText, styles.controlTextLandscape]}>Timer</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={toggleFacing}>
+            <Text style={[styles.controlIcon, styles.controlIconLandscape]}>🔄</Text>
+            <Text style={[styles.controlText, styles.controlTextLandscape]}>Flip</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.streamButton, styles.streamButtonLandscape, isStreaming ? styles.stopButton : styles.goLiveButton]}
+            onPress={() => void toggleStreaming()}
+          >
+            <Text style={[styles.streamButtonText, styles.streamButtonTextLandscape]}>
+              {isStreaming ? 'Stop Stream' : 'Go Live'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.bottomBar}>
+          <TouchableOpacity style={styles.controlButton} onPress={() => setTorch(!torch)}>
+            <Text style={styles.controlIcon}>{torch ? '⚡' : '🔌'}</Text>
+            <Text style={styles.controlText}>Flash</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.controlButton} onPress={toggleGrid}>
-          <Text style={styles.controlIcon}>{gridOverlay ? '🟰' : '📐'}</Text>
-          <Text style={styles.controlText}>Grid</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.controlButton} onPress={toggleGrid}>
+            <Text style={styles.controlIcon}>{gridOverlay ? '🟰' : '📐'}</Text>
+            <Text style={styles.controlText}>Grid</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.controlButton} onPress={startTimer}>
-          <Text style={styles.controlIcon}>⏱</Text>
-          <Text style={styles.controlText}>Timer</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.controlButton} onPress={startTimer}>
+            <Text style={styles.controlIcon}>⏱</Text>
+            <Text style={styles.controlText}>Timer</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.controlButton} onPress={toggleFacing}>
-          <Text style={styles.controlIcon}>🔄</Text>
-          <Text style={styles.controlText}>Flip</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.controlButton} onPress={toggleFacing}>
+            <Text style={styles.controlIcon}>🔄</Text>
+            <Text style={styles.controlText}>Flip</Text>
+          </TouchableOpacity>
 
-        {/* Shutter / photo capture button (prominent, centered) */}
-        <TouchableOpacity
-          style={[styles.shutterButton, isCapturing && styles.shutterCapturing]}
-          onPress={handleShutterPress}
-        >
-          <View style={styles.shutterRing} />
-        </TouchableOpacity>
+          {/* Shutter / photo capture button (prominent, centered) */}
+          {/* Removed: local photo capture is not part of the streaming flow */}
 
-        <TouchableOpacity
-          style={[styles.streamButton, isStreaming ? styles.stopButton : styles.goLiveButton]}
-          onPress={() => void toggleStreaming()}
-        >
-          <Text style={styles.streamButtonText}>{isStreaming ? 'Stop Stream' : 'Go Live'}</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.streamButton, isStreaming ? styles.stopButton : styles.goLiveButton]}
+            onPress={() => void toggleStreaming()}
+          >
+            <Text style={styles.streamButtonText}>{isStreaming ? 'Stop Stream' : 'Go Live'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <StatusBar style="light" />
     </View>
@@ -651,42 +677,56 @@ const styles = StyleSheet.create({
   },
   bottomBar: {
     position: 'absolute',
-    left: 16,
-    right: 16,
+    left: 12,
+    right: 12,
     bottom: 16,
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: 'rgba(15, 17, 23, 0.8)',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
     zIndex: 10,
   },
   bottomBarLandscape: {
-    bottom: 8,
+    position: 'absolute',
+    top: 80,
+    right: 12,
+    bottom: 12,
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(15, 17, 23, 0.75)',
     paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    zIndex: 10,
+    width: 74,
   },
   controlButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 60,
+    minWidth: 48,
   },
   controlIcon: {
-    fontSize: 20,
-    marginBottom: 4,
+    fontSize: 18,
+    marginBottom: 3,
   },
   controlText: {
     color: '#c9d1d9',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '500',
   },
   streamButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -703,35 +743,17 @@ const styles = StyleSheet.create({
   },
   streamButtonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
-  shutterButton: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 8,
-  },
-  shutterCapturing: {
-    backgroundColor: '#eb5757',
-    transform: [{ scale: 0.92 }],
-  },
-  shutterRing: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    borderWidth: 4,
-    borderColor: '#0a84ff',
-  },
+
+  /* --- Landscape overrides --- */
   errorBanner: {
     position: 'absolute',
     left: 16,
     right: 16,
-    bottom: 112,
+    bottom: 180,
     backgroundColor: 'rgba(235, 87, 87, 0.18)',
     borderWidth: 1,
     borderColor: 'rgba(235, 87, 87, 0.4)',
@@ -818,7 +840,7 @@ const styles = StyleSheet.create({
   },
   zoomIndicator: {
     position: 'absolute',
-    bottom: 140,
+    bottom: 200,
     alignSelf: 'center',
     flexDirection: 'row',
     gap: 10,
@@ -842,5 +864,33 @@ const styles = StyleSheet.create({
   },
   zoomActive: {
     color: '#0a84ff',
+  },
+
+  /* --- Landscape overrides --- */
+  controlButtonLandscape: {
+    minWidth: 56,
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+  },
+  controlIconLandscape: {
+    fontSize: 18,
+    marginBottom: 2,
+  },
+  controlTextLandscape: {
+    fontSize: 10,
+  },
+  streamButtonLandscape: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+  },
+  streamButtonTextLandscape: {
+    fontSize: 14,
+  },
+  zoomIndicatorLandscape: {
+    bottom: 'auto',
+    top: 120,
+    left: 12,
+    right: 'auto',
   },
 });

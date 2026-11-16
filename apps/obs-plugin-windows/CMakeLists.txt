@@ -95,7 +95,6 @@ add_subdirectory(streaming-core)
 set(PLUGIN_SOURCES
     src/obs-registration.cpp
     src/video-source.cpp
-    src/audio-source.cpp
     src/source-properties.cpp
     shared/src/device-manager.cpp
     shared/src/stream-receiver.cpp

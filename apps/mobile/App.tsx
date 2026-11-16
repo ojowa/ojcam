@@ -8,14 +8,12 @@ import HomeScreen from './src/screens/HomeScreen';
 import CameraScreen from './src/screens/CameraScreen';
 import ConnectionScreen from './src/screens/ConnectionScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
-import AudioScreen from './src/screens/AudioScreen';
 
 export type RootStackParamList = {
   Home: undefined;
   Camera: undefined;
   Connection: undefined;
   Settings: undefined;
-  Audio: undefined;
 };
 
 export type HomeScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Home'>;
@@ -37,7 +35,6 @@ export default function App() {
         <Stack.Screen name="Camera" component={CameraScreen} />
         <Stack.Screen name="Connection" component={ConnectionScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
-        <Stack.Screen name="Audio" component={AudioScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -267,7 +267,7 @@ describe('SignalingServer', () => {
     expect(server.isConnected()).toBe(false);
   });
 
-  it('keeps a second OBS connection (independent Wireless Mic peer)', async () => {
+  it('inbound connection replaces any previous peer', async () => {
     await server.connect();
     const first = new FakeSocket();
     connectionHandler?.(first);
@@ -276,10 +276,8 @@ describe('SignalingServer', () => {
 
     const second = new FakeSocket();
     connectionHandler?.(second);
-    // The first peer stays alive: the plugin opens one connection for the
-    // camera video stream and an independent one for the Wireless Microphone.
-    expect(first.destroyed).toBe(false);
-    expect(server.isConnected()).toBe(true);
+    // Inbound replaces the previous peer: single phone connection only.
+    expect(first.destroyed).toBe(true);
 
     second.emit('data', utf8Encode(clientHandshake()));
     expect(server.isConnected()).toBe(true);

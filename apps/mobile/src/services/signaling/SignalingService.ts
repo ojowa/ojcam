@@ -1,4 +1,4 @@
-import { SignalingServer, defaultTransportConfig, type TransportState, type PeerRole } from './SignalingServer';
+import { SignalingServer, defaultTransportConfig, type TransportState } from './SignalingServer';
 import { authService } from '../security/AuthService';
 import { deviceIdentity } from '../security/DeviceIdentity';
 import { encodeMessage, decodeMessageBase64 } from '../protocol/ProtobufCodec';
@@ -33,21 +33,15 @@ export class SignalingService {
   private lastPairingRequest: Record<string, unknown> | null = null;
   /** True once a PAIRING_REQUEST has been sent for the current connection cycle. */
   private pairingDone = false;
-  /** Called when OBS asks for the Wireless Microphone stream. */
-  private micRequestHandler: (() => void) | null = null;
 
   constructor(config: SignalingConfig = defaultSignalingConfig) {
     this.config = { ...config };
     this.transport = new SignalingServer({ ...defaultTransportConfig, url: config.serverUrl });
-    this.transport.setOnMessage((data, peer) => { void this.handleIncomingMessage(data, peer); });
+    this.transport.setOnMessage(data => { void this.handleIncomingMessage(data); });
     this.transport.setOnStateChange(state => this.handleStateChange(state));
     this.transport.setOnError(err => this.handlers.onError?.(err));
     // Sessions are short-lived; re-handshake automatically whenever one expires.
     authService.setOnSessionExpired(() => { void this.requestPairing(); });
-  }
-  /** Register the Wireless Mic starter (the streaming service owns capture). */
-  setMicRequestHandler(handler: (() => void) | null): void {
-    this.micRequestHandler = handler;
   }
   setHandlers(handlers: SignalingEventHandlers): void {
     this.handlers = handlers;
@@ -72,11 +66,6 @@ export class SignalingService {
   setServerUrl(url: string): void { this.config.serverUrl = url; this.transport.setUrl(url); }
   getServerUrl(): string { return this.config.serverUrl; }
   async sendReliable(data: string): Promise<boolean> { return this.transport.sendReliable(data); }
-  /**
-   * Stream one raw PCM chunk to OBS (WebSocket binary frame, opcode 0x2).
-   * Returns false when no peer is ready — the caller drops the chunk.
-   */
-  sendAudioFrame(pcm: Uint8Array): boolean { return this.transport.sendBinary(pcm); }
   async sendStartSession(payload: string, sessionId?: string): Promise<boolean> {
     const message = await authService.authenticateMessage({ type: 'START_SESSION', sessionId, payload, deviceId: deviceIdentity.getDeviceId() });
     return this.transport.sendReliable(JSON.stringify(message));
@@ -85,23 +74,19 @@ export class SignalingService {
   async sendIceCandidate(candidate: string, sessionId?: string): Promise<void> { await this.sendAuthenticated({ type: 'ICE_CANDIDATE', candidate, sessionId, deviceId: deviceIdentity.getDeviceId() }); }
   async sendAnswer(sdp: string, sdpType: string, sessionId?: string): Promise<void> { await this.sendAuthenticated({ type: 'ANSWER', sdp, sdpType, sessionId, deviceId: deviceIdentity.getDeviceId() }); }
   private async sendAuthenticated(message: SignalingMessage): Promise<void> { this.transport.send(JSON.stringify(await authService.authenticateMessage(message as unknown as Record<string, unknown>))); }
-  /** Authenticated broadcast: every peer (video + Wireless Microphone) sees it. */
-  private async sendAuthenticatedToAll(message: SignalingMessage): Promise<void> { this.transport.sendToAll(JSON.stringify(await authService.authenticateMessage(message as unknown as Record<string, unknown>))); }
   async sendDeviceAnnouncement(): Promise<void> {
     const announcement = { type: 'DEVICE_ANNOUNCEMENT' as const, deviceId: deviceIdentity.getDeviceId(), deviceName: this.config.deviceName,
       capabilities: { video: true, audio: true, resolutions: ['1280x720', '1920x1080', '3840x2160'], frameRates: [30, 60] } };
     const data = encodeMessage(announcement);
     let binary = ''; for (const byte of data) binary += String.fromCharCode(byte);
-    await this.sendAuthenticatedToAll({ type: 'DEVICE_ANNOUNCEMENT', deviceId: announcement.deviceId, payload: btoa(binary) });
+    await this.sendAuthenticated({ type: 'DEVICE_ANNOUNCEMENT', deviceId: announcement.deviceId, payload: btoa(binary) });
   }
 
   /**
    * Ask the connected peer for a session. The OBS plugin auto-accepts and
    * replies with a sessionToken — no pairing code involved.
-   * Every peer gets the request: OBS opens one connection for the camera
-   * video stream and an independent one for the Wireless Microphone.
-   * The request is sent once per connection cycle; retries are handled by
-   * the pairing-retry timer while a session is pending.
+   * Sent once per connection cycle; retries are handled by the
+   * pairing-retry timer while a session is pending.
    */
   async requestPairing(): Promise<void> {
     if (authService.isAuthenticated() || this.pairingDone) return;
@@ -118,11 +103,11 @@ export class SignalingService {
 
   private sendPairingRequest(payload: Record<string, unknown>): void {
     this.lastPairingRequest = payload;
-    this.transport.sendToAll(JSON.stringify(payload));
+    this.transport.send(JSON.stringify(payload));
     this.stopPairingRetry();
     this.pairingRetryTimer = setInterval(() => {
       if (this.transport.isConnected() && this.transport.hasPeer() && this.lastPairingRequest) {
-        this.transport.sendToAll(JSON.stringify(this.lastPairingRequest));
+        this.transport.send(JSON.stringify(this.lastPairingRequest));
       }
     }, 5000);
   }
@@ -131,7 +116,7 @@ export class SignalingService {
     this.pairingRetryTimer = null;
   }
 
-  private async handleIncomingMessage(data: string, peer?: unknown): Promise<void> {
+  private async handleIncomingMessage(data: string): Promise<void> {
     let message: SignalingMessage;
     try { message = JSON.parse(data) as SignalingMessage; }
     catch {
@@ -142,24 +127,13 @@ export class SignalingService {
     // The peer announces which stream it carries before the session exists:
     // it only classifies the connection, it grants no access.
     if (message.type === 'ROLE') {
-      this.transport.setPeerRole(peer as never, (message as { role?: PeerRole }).role ?? 'unknown');
       return;
     }
     if (message.type === 'PING') {
-      this.transport.sendToPeer(peer as never, JSON.stringify({ type: 'PONG' }));
+      this.transport.send(JSON.stringify({ type: 'PONG' }));
       return;
     }
     if (message.type === 'PONG') return;
-    if (message.type === 'MIC_REQUEST') {
-      // OBS' Wireless Microphone source asked for the mic stream: mark the
-      // peer as the mic consumer and let the app start the capture.
-      this.transport.setPeerRole(peer as never, 'mic');
-      const validation = await authService.validateIncomingMessage(
-        message as unknown as Record<string, unknown>);
-      if (!validation.valid) { console.warn('Rejected mic request:', validation.reason); return; }
-      this.micRequestHandler?.();
-      return;
-    }
     if (message.type === 'PAIRING_RESPONSE') {
       if (message.success && message.sessionToken) {
         await authService.establishSession(message.sessionToken);

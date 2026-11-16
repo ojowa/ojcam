@@ -9,18 +9,25 @@ struct OjowacamVideoData {
     obs_source_t *source;
     uint32_t width;
     uint32_t height;
+    float sample_rate;
+    int channels;
     std::shared_ptr<ojowacam::StreamReceiver> stream_receiver;
     ojowacam::FrameConverter* frame_converter = nullptr;
     gs_texture_t* current_texture = nullptr;
     bool connected = false;
+    // Last device this source connected to (name + ip), shown in properties.
+    std::string connected_device;
 };
 
 obs_source_info ojowacam_video_source_info = [] {
     obs_source_info info{};
     info.id = "ojowacam_video_source";
     info.type = OBS_SOURCE_TYPE_INPUT;
-    info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_ASYNC_VIDEO;
-    info.get_name = [](void *) -> const char * { return "Ojowacam Video"; };
+    // One source outputs both the camera video (WebRTC track) and the phone's
+    // microphone audio (WebSocket binary frames), carried over a single
+    // signaling connection.
+    info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_ASYNC_VIDEO;
+    info.get_name = [](void *) -> const char * { return "Ojowacam Camera"; };
     info.create = ojowacam_video_create;
     info.destroy = ojowacam_video_destroy;
     info.get_width = ojowacam_video_width;
@@ -32,6 +39,9 @@ obs_source_info ojowacam_video_source_info = [] {
         // Applies when the key is absent, so existing scenes gain
         // same-network auto-discovery without losing their stored URL.
         obs_data_set_default_bool(settings, "auto_discover", true);
+        obs_data_set_default_bool(settings, "enabled", true);
+        obs_data_set_default_double(settings, "sample_rate", 48000.0);
+        obs_data_set_default_int(settings, "channels", 2);
         obs_data_set_default_string(settings, "signaling_url", "");
     };
     return info;
@@ -43,6 +53,8 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
     data->source = source;
     data->width = 1920;
     data->height = 1080;
+    data->sample_rate = (float)obs_data_get_double(settings, "sample_rate");
+    data->channels = (int)obs_data_get_int(settings, "channels");
     data->frame_converter = new ojowacam::FrameConverter();
 
     const char* device_id = obs_data_get_string(settings, "device_id");
@@ -51,12 +63,15 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
+    blog(LOG_INFO, "[Ojowacam] video_create: device_id='%s' signaling_url='%s' auto_discover=%d",
+         resolved_device_id.c_str(), resolved_signaling_url.c_str(), auto_discover ? 1 : 0);
 
     if (!resolved_signaling_url.empty() || auto_discover) {
         data->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url, auto_discover, "video");
+            resolved_device_id, resolved_signaling_url, auto_discover);
         if (data->stream_receiver) {
             data->stream_receiver->setVideoSource(source);
+            data->stream_receiver->setAudioSource(source);
             data->stream_receiver->onVideoSizeChanged = [data](uint32_t w, uint32_t h) {
                 data->width = w;
                 data->height = h;
@@ -73,6 +88,7 @@ void ojowacam_video_destroy(void *data)
     auto *d = static_cast<OjowacamVideoData *>(data);
     if (d->stream_receiver) {
         d->stream_receiver->setVideoSource(nullptr);
+        d->stream_receiver->setAudioSource(nullptr);
         d->stream_receiver->onVideoSizeChanged = nullptr;
         d->stream_receiver.reset();
     }
@@ -112,9 +128,12 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
+    blog(LOG_INFO, "[Ojowacam] video_update: device_id='%s' signaling_url='%s' auto_discover=%d",
+         resolved_device_id.c_str(), resolved_signaling_url.c_str(), auto_discover ? 1 : 0);
 
     if (d->stream_receiver) {
         d->stream_receiver->setVideoSource(nullptr);
+        d->stream_receiver->setAudioSource(nullptr);
         d->stream_receiver->onVideoSizeChanged = nullptr;
         d->stream_receiver.reset();
     }
@@ -122,22 +141,37 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
 
     if (!resolved_signaling_url.empty() || auto_discover) {
         d->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url, auto_discover, "video");
+            resolved_device_id, resolved_signaling_url, auto_discover);
         if (d->stream_receiver) {
             d->stream_receiver->setVideoSource(d->source);
+            d->stream_receiver->setAudioSource(d->source);
             d->stream_receiver->onVideoSizeChanged = [d](uint32_t w, uint32_t h) {
                 d->width = w;
                 d->height = h;
             };
             d->connected = d->stream_receiver->isConnected();
+            // Record which device we are connected to (shown in properties).
+            if (d->connected) {
+                auto *dm = ojowacam::DeviceManager::GetInstance();
+                auto devices = dm->GetDevices();
+                for (const auto& dev : devices) {
+                    if (dev.device_id == resolved_device_id) {
+                        d->connected_device = dev.device_name + " (" + dev.ip_address + ")";
+                        break;
+                    }
+                }
+                if (d->connected_device.empty()) {
+                    d->connected_device = resolved_signaling_url;
+                }
+            }
         }
     }
 }
 
 obs_properties_t *ojowacam_video_properties(void *data)
 {
+    auto *d = static_cast<OjowacamVideoData*>(data);
     auto *props = obs_properties_create();
-    UNUSED_PARAMETER(data);
 
     obs_property_t *device_list = obs_properties_add_list(
         props, "device_id", "Device", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -160,19 +194,40 @@ obs_properties_t *ojowacam_video_properties(void *data)
             return true;
         });
 
-    obs_properties_add_text(props, "signaling_url", "Signaling URL (optional with auto-discovery)", OBS_TEXT_DEFAULT);
-    obs_properties_add_bool(props, "auto_discover",
-                            "Auto-discover the phone on this network (any IP)");
+    // Connect to the selected discovered device: build ws://ip:port from the
+    // device manager's beacon table (no manual URL entry needed).
     obs_properties_add_button(props, "connect", "Connect to Device", [](obs_properties_t*, obs_property_t*, void* data) {
         auto *d = static_cast<OjowacamVideoData*>(data);
         obs_data_t *settings = obs_source_get_settings(d->source);
-        ojowacam_video_update(d, settings);
+        const char *device_id = obs_data_get_string(settings, "device_id");
+
+        std::string signaling_url;
+        auto *dm = ojowacam::DeviceManager::GetInstance();
+        auto devices = dm->GetDevices();
+        for (const auto& dev : devices) {
+            if (dev.device_id == device_id) {
+                signaling_url = "ws://" + dev.ip_address + ":" + std::to_string(dev.port);
+                d->connected_device = dev.device_name + " (" + dev.ip_address + ")";
+                break;
+            }
+        }
+        obs_data_set_string(settings, "signaling_url", signaling_url.c_str());
+        obs_source_update(d->source, settings);
         obs_data_release(settings);
         return true;
     });
 
-    obs_properties_add_bool(props, "connected", "Connected");
+    // Read-only: which device this source is currently connected to.
+    std::string connected_label = d->connected_device.empty()
+        ? "Not connected"
+        : ("Connected to: " + d->connected_device);
+    obs_properties_add_text(props, "connected_device", "Connected Device", OBS_TEXT_DEFAULT);
+    obs_property_set_long_description(obs_properties_get(props, "connected_device"),
+        connected_label.c_str());
 
+    obs_properties_add_bool(props, "connected", "Connected");
+    obs_properties_add_float(props, "sample_rate", "Sample Rate (Hz)", 8000.0f, 192000.0f, 1.0f);
+    obs_properties_add_int(props, "channels", "Channels", 1, 8, 1);
     obs_properties_add_int(props, "resolution_width", "Width", 1, 7680, 1);
     obs_properties_add_int(props, "resolution_height", "Height", 1, 4320, 1);
     obs_properties_add_int(props, "fps", "Frame Rate", 1, 60, 1);

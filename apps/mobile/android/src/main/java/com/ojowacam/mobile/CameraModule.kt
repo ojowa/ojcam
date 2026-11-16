@@ -70,6 +70,7 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
 
     private fun startCaptureInternal(cameraId: String, width: Int, height: Int, fps: Int, promise: Promise) {
         try {
+            Log.d(TAG, "startCaptureInternal: cameraId=$cameraId width=$width height=$height fps=$fps")
             stopCaptureInternal()
             currentCameraId = cameraId
             isStreaming = true
@@ -84,13 +85,16 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             imageReader = ImageReader.newInstance(chosen.width, chosen.height, android.graphics.ImageFormat.YUV_420_888, 5)
             val stateCallback = object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
+                    Log.d(TAG, "camera opened: $cameraId")
                     cameraDevice = device
                     createCaptureSession(device, chosen.width, chosen.height, fps)
                 }
                 override fun onDisconnected(device: CameraDevice) {
+                    Log.d(TAG, "camera disconnected: $cameraId")
                     device.close(); cameraDevice = null; isStreaming = false
                 }
                 override fun onError(device: CameraDevice, error: Int) {
+                    Log.e(TAG, "camera error: $cameraId error=$error")
                     device.close(); cameraDevice = null; isStreaming = false
                     promise.reject("CAMERA_ERROR", "Camera error: $error", null)
                 }
@@ -134,12 +138,17 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         try {
             val surface = imageReader!!.surface
             val listener = object : ImageReader.OnImageAvailableListener {
+                var frameCount = 0L
                 override fun onImageAvailable(reader: ImageReader) {
                     reader.acquireNextImage()?.use { image ->
                         val yuvData = yuv420888ToI420(image)
                         if (yuvData != null) {
                             // Monotonic nanoseconds for WebRTC timestamps.
                             val timestampNs = System.nanoTime()
+                            frameCount++
+                            if (frameCount <= 5L || frameCount % 30L == 0L) {
+                                Log.d(TAG, "onImageAvailable #$frameCount ${image.width}x${image.height} ts=$timestampNs")
+                            }
                             onVideoFrame?.invoke(yuvData, timestampNs)
                             onEncodedFrame?.invoke(yuvData)
                         }
