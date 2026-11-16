@@ -74,35 +74,42 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             stopCaptureInternal()
             currentCameraId = cameraId
             isStreaming = true
+
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-            // Negotiate with the sensor: 4K (and other sizes) may be unsupported
-            // on some lenses (front-facing often caps at 1080p).
             val outputMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val sizes = outputMap?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888) ?: emptyArray()
-            val chosenSize = if (sizes.isNotEmpty()) {
-                chooseOutputSize(sizes, width, height)
-            } else {
-                // Fall back to any available output format on budget phones
-                val fallbackFormat = outputMap?.getOutputFormats()?.firstOrNull { fmt ->
-                    outputMap.getOutputSizes(fmt)?.isNotEmpty() == true
-                }
-                val fallbackSizes = fallbackFormat?.let { fmt ->
-                    outputMap.getOutputSizes(fmt) ?: emptyArray()
-                } ?: emptyArray()
-                if (fallbackSizes.isEmpty()) {
-                    promise.reject("CAMERA_FORMAT_ERROR", "Camera does not support any output format")
-                    return
-                }
-                chooseOutputSize(fallbackSizes, width, height)
+
+            // Try multiple formats: YUV_420_888 first, then JPEG as fallback
+            val targetFormats = listOf(
+                android.graphics.ImageFormat.YUV_420_888,
+                android.graphics.ImageFormat.JPEG
+            )
+
+            var chosenSize: android.util.Size? = null
+            var chosenFormat = android.graphics.ImageFormat.YUV_420_888
+
+            for (fmt in targetFormats) {
+                val sizes = outputMap?.getOutputSizes(fmt) ?: emptyArray()
+                if (sizes.isEmpty()) continue
+                val chosen = chooseOutputSize(sizes, width, height)
+                chosenSize = chosen
+                chosenFormat = fmt
+                break
             }
+
+            if (chosenSize == null) {
+                promise.reject("CAMERA_FORMAT_ERROR", "Camera does not support any output format")
+                return
+            }
+
             frameWidth = chosenSize.width
             frameHeight = chosenSize.height
-            imageReader = ImageReader.newInstance(chosenSize.width, chosenSize.height, android.graphics.ImageFormat.YUV_420_888, 5)
+            imageReader = ImageReader.newInstance(chosenSize.width, chosenSize.height, chosenFormat, 5)
+
             val stateCallback = object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     Log.d(TAG, "camera opened: $cameraId")
                     cameraDevice = device
-                    createCaptureSession(device, chosenSize.width, chosenSize.height, fps)
+                    createCaptureSession(device, chosenSize.width, chosenSize.height, fps, chosenFormat)
                 }
                 override fun onDisconnected(device: CameraDevice) {
                     Log.d(TAG, "camera disconnected: $cameraId")
@@ -130,11 +137,6 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         }
     }
 
-    /**
-     * Pick the best supported output size for the requested dimensions:
-     * exact match first, then the largest size with the same aspect ratio
-     * that does not upscale, then any no-upscale size, then the closest.
-     */
     private fun chooseOutputSize(sizes: Array<android.util.Size>, reqW: Int, reqH: Int): android.util.Size {
         if (sizes.isEmpty()) return android.util.Size(reqW, reqH)
         sizes.firstOrNull { it.width == reqW && it.height == reqH }?.let { return it }
@@ -149,7 +151,7 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         }
         return pool.minByOrNull { it.width.toLong() * it.height }!!
     }
-    private fun createCaptureSession(device: CameraDevice, width: Int, height: Int, fps: Int) {
+    private fun createCaptureSession(device: CameraDevice, width: Int, height: Int, fps: Int, format: Int) {
         try {
             val surface = imageReader!!.surface
             val listener = object : ImageReader.OnImageAvailableListener {
@@ -158,7 +160,6 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                     reader.acquireNextImage()?.use { image ->
                         val yuvData = convertImageToI420(image)
                         if (yuvData != null) {
-                            // Monotonic nanoseconds for WebRTC timestamps.
                             val timestampNs = System.nanoTime()
                             frameCount++
                             if (frameCount <= 5L || frameCount % 30L == 0L) {
@@ -176,8 +177,6 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     Log.d(TAG, "Camera capture session configured")
-                    // Start producing frames: without a repeating capture request
-                    // the ImageReader never gets frames and onImageAvailable never fires.
                     try {
                         val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                         builder.addTarget(imageReader!!.surface)
@@ -324,7 +323,7 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val stateCallback = object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     cameraDevice = device
-                    createCaptureSession(device, 1920, 1080, 30)
+                    createCaptureSession(device, 1920, 1080, 30, android.graphics.ImageFormat.YUV_420_888)
                 }
                 override fun onDisconnected(device: CameraDevice) {
                     device.close(); cameraDevice = null
@@ -363,8 +362,6 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             if (id == null || captureSession == null) { promise.resolve(false); return }
             val characteristics = cameraManager.getCameraCharacteristics(id)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
-            // Some budget phones report maxZoom of 1.0 (no digital zoom), but we
-            // still allow zoom up to 4.0x via crop region scaling.
             val actualMaxZoom = Math.max(maxZoom, 4.0f)
             val clampedZoom = zoomLevel.coerceIn(1.0f, actualMaxZoom)
             val builder = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
