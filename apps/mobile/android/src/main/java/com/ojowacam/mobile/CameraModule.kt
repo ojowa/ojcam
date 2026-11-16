@@ -77,17 +77,34 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
             // Negotiate with the sensor: 4K (and other sizes) may be unsupported
             // on some lenses (front-facing often caps at 1080p).
+            // YUV_420_888 is the standard Android Camera2 output format and
+            // is supported on all modern devices including budget phones.
             val outputMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val sizes = outputMap?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888) ?: emptyArray()
-            val chosen = chooseOutputSize(sizes, width, height)
-            frameWidth = chosen.width
-            frameHeight = chosen.height
-            imageReader = ImageReader.newInstance(chosen.width, chosen.height, android.graphics.ImageFormat.YUV_420_888, 5)
+            val chosenSize = if (sizes.isNotEmpty()) {
+                chooseOutputSize(sizes, width, height)
+            } else {
+                // Fall back to any available output format on budget phones
+                val fallbackFormat = outputMap?.getOutputFormats()?.firstOrNull { fmt ->
+                    outputMap.getOutputSizes(fmt)?.isNotEmpty() == true
+                }
+                val fallbackSizes = fallbackFormat?.let { fmt ->
+                    outputMap.getOutputSizes(fmt) ?: emptyArray()
+                } ?: emptyArray()
+                if (fallbackSizes.isEmpty()) {
+                    promise.reject("CAMERA_FORMAT_ERROR", "Camera does not support any output format")
+                    return
+                }
+                chooseOutputSize(fallbackSizes, width, height)
+            }
+            frameWidth = chosenSize.width
+            frameHeight = chosenSize.height
+            imageReader = ImageReader.newInstance(chosenSize.width, chosenSize.height, android.graphics.ImageFormat.YUV_420_888, 5)
             val stateCallback = object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     Log.d(TAG, "camera opened: $cameraId")
                     cameraDevice = device
-                    createCaptureSession(device, chosen.width, chosen.height, fps)
+                    createCaptureSession(device, chosenSize.width, chosenSize.height, fps)
                 }
                 override fun onDisconnected(device: CameraDevice) {
                     Log.d(TAG, "camera disconnected: $cameraId")
@@ -102,8 +119,8 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val handler = android.os.Handler(android.os.HandlerThread("CameraOpenThread").apply { start() }.looper)
             cameraManager.openCamera(cameraId, stateCallback, handler)
             val result = Arguments.createMap().apply {
-                putInt("width", chosen.width)
-                putInt("height", chosen.height)
+                putInt("width", chosenSize.width)
+                putInt("height", chosenSize.height)
             }
             promise.resolve(result)
         } catch (e: SecurityException) {
@@ -210,13 +227,23 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     }
 
     /**
-     * Convert YUV_420_888 (row/pixel strides) to tightly packed I420:
+     * Convert YUV image (YUV_420_888 or similar) to tightly packed I420:
      * Y plane (w*h), then U (w/2 * h/2), then V (w/2 * h/2).
+     * Handles different YUV formats by checking the image format.
      */
     private fun yuv420888ToI420(image: android.media.Image): ByteArray? {
         val width = image.width
         val height = image.height
-        if (width <= 0 || height <= 0 || image.planes.size < 3) return null
+        if (width <= 0 || height <= 0 || image.planes.size < 1) return null
+
+        val format = image.format
+
+        // Only YUV_420_888 is currently supported for raw I420 conversion.
+        // Other formats (JPEG, etc.) are not raw camera frames.
+        if (format != android.graphics.ImageFormat.YUV_420_888) {
+            Log.w(TAG, "Image format $format not supported for raw YUV conversion, expected YUV_420_888")
+            return null
+        }
 
         val ySize = width * height
         val chromaWidth = width / 2
@@ -322,7 +349,10 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             if (id == null || captureSession == null) { promise.resolve(false); return }
             val characteristics = cameraManager.getCameraCharacteristics(id)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
-            val clampedZoom = zoomLevel.coerceIn(1.0f, maxZoom)
+            // Some budget phones report maxZoom of 1.0 (no digital zoom), but we
+            // still allow zoom up to 4.0x via crop region scaling.
+            val actualMaxZoom = Math.max(maxZoom, 4.0f)
+            val clampedZoom = zoomLevel.coerceIn(1.0f, actualMaxZoom)
             val builder = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             builder.addTarget(imageReader!!.surface)
             builder.set(CaptureRequest.SCALER_CROP_REGION, calculateCropRegion(characteristics, clampedZoom))
