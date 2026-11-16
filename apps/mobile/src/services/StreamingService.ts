@@ -31,6 +31,8 @@ export interface StreamingState {
   isStreaming: boolean;
   isConnected: boolean;
   isAuthenticated: boolean;
+  /** True once the phone's signaling server has bound its port. */
+  isListening: boolean;
   currentCameraId: string | null;
   sessionTTL: number;
   error: string | null;
@@ -63,6 +65,7 @@ export class StreamingService {
     isStreaming: false,
     isConnected: false,
     isAuthenticated: false,
+    isListening: false,
     currentCameraId: null,
     sessionTTL: 0,
     error: null,
@@ -100,7 +103,7 @@ export class StreamingService {
         // alive: the signaling link can drop and be re-established (OBS
         // re-dials, the phone restarts its socket) while the WebRTC session
         // is still valid. A new peer triggers a re-offer with an ICE restart
-        // (see onConnected). Explicit stops go through disconnectSignaling().
+        // (see onConnected).
         this.notifyStateChange();
       },
       onReconnecting: (attempt) => {
@@ -156,6 +159,9 @@ export class StreamingService {
       this.state.isConnected = signalingService.isConnected();
       this.state.isAuthenticated = authService.isAuthenticated();
       this.state.sessionTTL = authService.getSessionTTL();
+      // Let any mounted screen learn the listening state right away instead
+      // of waiting for the next unrelated state change.
+      this.notifyStateChange();
       return true;
     } catch (error) {
       console.error('Failed to initialize streaming:', error);
@@ -163,49 +169,6 @@ export class StreamingService {
       this.notifyStateChange();
       return false;
     }
-  }
-
-  /**
-   * Start the phone-hosted signaling server (or reuse it).
-   * Returns the local signaling URL on success.
-   */
-  async connectSignaling(): Promise<string> {
-    await connectionConfig.load();
-    const url = connectionConfig.getSignalingUrl();
-    this.config.signalingUrl = url;
-    signalingService.setServerUrl(url);
-    this.state.error = null;
-    this.notifyStateChange();
-    try {
-      await signalingService.initialize();
-      if (!signalingService.isListening()) {
-        await signalingService.connect();
-      }
-      // Success means the phone's WebSocket server bound its port. A peer
-      // (the OBS plugin) may attach later — discovery and the phone's dial
-      // out handle that, so "no peer yet" is NOT an error here.
-      if (!signalingService.isListening()) {
-        throw new Error(`Unable to start the signaling server on ${url}`);
-      }
-      this.state.isConnected = signalingService.isConnected();
-      this.notifyStateChange();
-      return url;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : `Unable to connect to ${url}`;
-      this.state.isConnected = false;
-      this.state.error = message;
-      this.notifyStateChange();
-      throw new Error(message);
-    }
-  }
-
-  async disconnectSignaling(): Promise<void> {
-    // Explicit user action: stop the media session as well.
-    if (this.isStreaming) await this.stopStreaming();
-    signalingService.disconnect();
-    this.state.isConnected = false;
-    this.state.isAuthenticated = false;
-    this.notifyStateChange();
   }
 
   getSignalingUrl(): string {
@@ -443,6 +406,7 @@ export class StreamingService {
   isPaired(): boolean { return authService.isPaired(); }
 
   private notifyStateChange(): void {
+    this.state.isListening = signalingService.isListening();
     this.state.isConnected = signalingService.isConnected();
     this.state.isAuthenticated = authService.isAuthenticated();
     this.state.sessionTTL = authService.getSessionTTL();

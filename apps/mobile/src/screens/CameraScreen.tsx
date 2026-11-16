@@ -250,11 +250,13 @@ export default function CameraScreen() {
 
   // Listen to streaming state changes from the service.
   React.useEffect(() => {
-    const unsubscribe = streamingService.setOnStateChange((state) => {
+    streamingService.setOnStateChange((state) => {
       setIsStreaming(state.isStreaming);
       setStreamError(state.error || null);
     });
-    return () => unsubscribe();
+    return () => {
+      streamingService.setOnStateChange(() => undefined);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -662,12 +664,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.85)',
-  },
-  streamingText: {
-    color: '#eb5757',
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 1,
   },
   streamingSub: {
     color: '#c9d1d9',

@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Switch, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { USBService } from '../services/usb/USBService';
 import { streamingService } from '../services/StreamingService';
@@ -10,8 +10,7 @@ export default function ConnectionScreen() {
   const [connectionMode, setConnectionMode] = React.useState<'wifi' | 'usb'>('wifi');
   const [usbDevices, setUSBDevices] = React.useState<Array<{id: string; name: string; type: string}>>([]);
   const [isUsbConnected, setIsUsbConnected] = React.useState(false);
-  const [connecting, setConnecting] = React.useState(false);
-  const [serverRunning, setServerRunning] = React.useState(false);
+  const [listening, setListening] = React.useState(false);
   const [peerConnected, setPeerConnected] = React.useState(false);
   const [localIp, setLocalIp] = React.useState('');
   const [signalingUrl, setSignalingUrl] = React.useState('');
@@ -21,6 +20,7 @@ export default function ConnectionScreen() {
     let cancelled = false;
     const applyState = (state: ReturnType<typeof streamingService.getState>) => {
       if (cancelled) return;
+      setListening(state.isListening);
       setPeerConnected(state.isConnected);
       if (state.isConnected) setConnectionError(null);
       else if (state.error) setConnectionError(state.error);
@@ -74,37 +74,6 @@ export default function ConnectionScreen() {
     setIsUsbConnected(false);
   };
 
-  const connectWiFi = async () => {
-    if (connecting || serverRunning) return;
-    setConnecting(true);
-    setConnectionError(null);
-    try {
-      const url = await streamingService.connectSignaling();
-      setSignalingUrl(url);
-      try {
-        const ip = await Network.getIpAddressAsync();
-        if (ip && ip !== '0.0.0.0') setLocalIp(ip);
-      } catch {
-        // Keep any previously fetched IP.
-      }
-      setServerRunning(true);
-    } catch (error) {
-      setServerRunning(false);
-      const message = error instanceof Error ? error.message : 'Unable to start the signaling server.';
-      setConnectionError(message);
-      Alert.alert('Wi-Fi Connection Failed', message);
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const disconnectWiFi = async () => {
-    await streamingService.disconnectSignaling();
-    setServerRunning(false);
-    setPeerConnected(false);
-    setConnectionError(null);
-  };
-
   React.useEffect(() => {
     loadUSBDevices();
     USBService.on('onUSBConnected', (data) => {
@@ -154,34 +123,23 @@ export default function ConnectionScreen() {
               : signalingUrl || 'ws://0.0.0.0:8765'}
           </Text>
           <Text style={styles.hostHint}>
-            Start the server, then add an Ojowacam source in OBS Studio — it
-            discovers this phone automatically on the same network. The URL
+            This phone is always listening. Add an Ojowacam source in OBS
+            Studio and it connects automatically on the same network. The URL
             above is a fallback for manual setup.
           </Text>
           <View style={styles.statusRow}>
-            <View style={[styles.statusDot, (serverRunning || peerConnected) && styles.statusDotConnected]} />
+            <View style={[styles.statusDot, (listening || peerConnected) && styles.statusDotConnected]} />
             <Text style={styles.statusText}>
-              {connecting
-                ? 'Starting…'
-                : peerConnected
-                  ? 'Connected'
-                  : serverRunning
-                    ? 'Waiting for OBS…'
-                    : 'Stopped'}
+              {peerConnected
+                ? 'Connected'
+                : listening
+                  ? 'Waiting for OBS…'
+                  : 'Starting…'}
             </Text>
           </View>
           {connectionError && !peerConnected ? (
             <Text style={styles.connectionError}>{connectionError}</Text>
           ) : null}
-          <TouchableOpacity
-            style={[styles.button, connecting && styles.buttonDisabled]}
-            onPress={serverRunning ? disconnectWiFi : connectWiFi}
-            disabled={connecting}
-          >
-            <Text style={styles.buttonText}>
-              {serverRunning ? 'Stop Server' : connecting ? 'Starting…' : 'Start Server'}
-            </Text>
-          </TouchableOpacity>
         </View>
       )}
 
@@ -351,9 +309,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     paddingVertical: 20,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
   },
   fieldLabel: {
     color: '#8e93a0',
