@@ -77,8 +77,6 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
             // Negotiate with the sensor: 4K (and other sizes) may be unsupported
             // on some lenses (front-facing often caps at 1080p).
-            // YUV_420_888 is the standard Android Camera2 output format and
-            // is supported on all modern devices including budget phones.
             val outputMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val sizes = outputMap?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888) ?: emptyArray()
             val chosenSize = if (sizes.isNotEmpty()) {
@@ -158,13 +156,13 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 var frameCount = 0L
                 override fun onImageAvailable(reader: ImageReader) {
                     reader.acquireNextImage()?.use { image ->
-                        val yuvData = yuv420888ToI420(image)
+                        val yuvData = convertImageToI420(image)
                         if (yuvData != null) {
                             // Monotonic nanoseconds for WebRTC timestamps.
                             val timestampNs = System.nanoTime()
                             frameCount++
                             if (frameCount <= 5L || frameCount % 30L == 0L) {
-                                Log.d(TAG, "onImageAvailable #$frameCount ${image.width}x${image.height} ts=$timestampNs")
+                                Log.d(TAG, "onImageAvailable #$frameCount ${image.width}x${image.height} fmt=${image.format} ts=$timestampNs")
                             }
                             onVideoFrame?.invoke(yuvData, timestampNs)
                             onEncodedFrame?.invoke(yuvData)
@@ -227,23 +225,20 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     }
 
     /**
-     * Convert YUV image (YUV_420_888 or similar) to tightly packed I420:
+     * Convert YUV image to tightly packed I420:
      * Y plane (w*h), then U (w/2 * h/2), then V (w/2 * h/2).
-     * Handles different YUV formats by checking the image format.
+     * Handles YUV_420_888 format. Returns null on any error.
      */
-    private fun yuv420888ToI420(image: android.media.Image): ByteArray? {
-        val width = image.width
-        val height = image.height
-        if (width <= 0 || height <= 0 || image.planes.size < 1) return null
-
+    private fun convertImageToI420(image: android.media.Image): ByteArray? {
         val format = image.format
-
-        // Only YUV_420_888 is currently supported for raw I420 conversion.
-        // Other formats (JPEG, etc.) are not raw camera frames.
         if (format != android.graphics.ImageFormat.YUV_420_888) {
-            Log.w(TAG, "Image format $format not supported for raw YUV conversion, expected YUV_420_888")
+            Log.w(TAG, "Image format $format not supported for I420 conversion, expected YUV_420_888")
             return null
         }
+
+        val width = image.width
+        val height = image.height
+        if (width <= 0 || height <= 0 || image.planes.size < 3) return null
 
         val ySize = width * height
         val chromaWidth = width / 2
@@ -251,13 +246,19 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         val chromaSize = chromaWidth * chromaHeight
         val out = ByteArray(ySize + chromaSize * 2)
 
-        val yPlane = image.planes[0]
-        val uPlane = image.planes[1]
-        val vPlane = image.planes[2]
+        try {
+            val yPlane = image.planes[0]
+            val uPlane = image.planes[1]
+            val vPlane = image.planes[2]
 
-        copyPlane(yPlane.buffer, yPlane.rowStride, yPlane.pixelStride, width, height, out, 0, ySize, width)
-        copyPlane(uPlane.buffer, uPlane.rowStride, uPlane.pixelStride, chromaWidth, chromaHeight, out, ySize, chromaSize, chromaWidth)
-        copyPlane(vPlane.buffer, vPlane.rowStride, vPlane.pixelStride, chromaWidth, chromaHeight, out, ySize + chromaSize, chromaSize, chromaWidth)
+            copyPlane(yPlane.buffer, yPlane.rowStride, yPlane.pixelStride, width, height, out, 0, ySize, width)
+            copyPlane(uPlane.buffer, uPlane.rowStride, uPlane.pixelStride, chromaWidth, chromaHeight, out, ySize, chromaSize, chromaWidth)
+            copyPlane(vPlane.buffer, vPlane.rowStride, vPlane.pixelStride, chromaWidth, chromaHeight, out, ySize + chromaSize, chromaSize, chromaWidth)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to convert I420 frame: ${e.message}", e)
+            return null
+        }
+
         return out
     }
 
@@ -273,27 +274,40 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         dstRowStride: Int,
     ) {
         src.rewind()
+        val dstRemaining = dst.size - dstOffset
+        if (dstRemaining <= 0) return
+
         if (pixelStride == 1 && rowStride == width) {
-            val toCopy = minOf(src.remaining(), dstSize)
-            src.get(dst, dstOffset, toCopy)
+            val toCopy = minOf(src.remaining(), dstRemaining)
+            if (toCopy > 0) {
+                src.get(dst, dstOffset, toCopy)
+            }
             return
         }
         var outPos = dstOffset
         for (row in 0 until height) {
             val srcPos = row * rowStride
+            if (srcPos >= src.limit()) break
             if (pixelStride == 1) {
-                for (col in 0 until width) {
-                    if (srcPos + col >= src.limit()) break
+                val rowRemaining = dstRemaining - outPos
+                if (rowRemaining <= 0) break
+                val copyWidth = minOf(width, rowRemaining)
+                for (col in 0 until copyWidth) {
+                    val srcIdx = srcPos + col
+                    if (srcIdx >= src.limit()) break
                     dst[outPos + col] = src.get(srcPos + col)
                 }
+                outPos += copyWidth
             } else {
                 for (col in 0 until width) {
                     val idx = srcPos + col * pixelStride
+                    val dstIdx = outPos + col
                     if (idx >= src.limit()) break
-                    dst[outPos + col] = src.get(idx)
+                    if (dstIdx >= dst.size) break
+                    dst[dstIdx] = src.get(idx)
                 }
+                outPos += width
             }
-            outPos += dstRowStride
         }
     }
 
@@ -406,4 +420,3 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun getCurrentCameraId(): String? = currentCameraId
 
 }
-
