@@ -43,13 +43,6 @@ jobs:
         run: |
           npm install
           cd apps/mobile && npm install
-      - name: Android native modules present
-        run: |
-          echo "Android native modules exist at apps/mobile/android/"
-          ls apps/mobile/android/src/main/java/com/ojowacam/mobile/
-          echo "Building Android debug and release APKs with Gradle 8.0..."
-          sudo apt-get update && sudo apt-get install -y unzip zip
-          cd apps/mobile/android && chmod +x gradlew && ./gradlew assembleDebug assembleRelease
       - name: Decode Android release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -58,20 +51,16 @@ jobs:
             echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > apps/mobile/android/ojowacam-upload-keystore.jks
             echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/apps/mobile/android/ojowacam-upload-keystore.jks" >> $GITHUB_ENV
           fi
-      - name: Build Android release APK and AAB
-        env:
-          ANDROID_KEYSTORE_PATH: ${{ env.ANDROID_KEYSTORE_PATH }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - name: Android native modules present
         run: |
-          if [ -n "$ANDROID_KEYSTORE_PATH" ]; then
-            cd apps/mobile/android
-            ./gradlew assembleRelease bundleRelease
-          fi
+          echo "Android native modules exist at apps/mobile/android/"
+          ls apps/mobile/android/src/main/java/com/ojowacam/mobile/
+          echo "Building Android debug APK, release APK, and release AAB with Gradle 8.0..."
+          sudo apt-get update && sudo apt-get install -y unzip zip
+          cd apps/mobile/android && chmod +x gradlew && ./gradlew assembleDebug assembleRelease bundleRelease
       - name: Stage artifacts into publish folder
         run: |
-          mkdir -p ci-output/apk-debug/publish ci-output/apk-release/publish ci-output/aab/publish
+          mkdir -p ci-output/apk-debug/publish ci-output/apk-release/publish ci-output/aab-release/publish
           # Debug APK (connects to Metro dev server — for development/testing)
           if [ -f apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk ]; then
             cp apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk ci-output/apk-debug/publish/
@@ -80,8 +69,9 @@ jobs:
           if [ -f apps/mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
             cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk ci-output/apk-release/publish/
           fi
+          # Release AAB (bundled JS, no Metro dependency — production artifact for Play Store)
           if [ -f apps/mobile/android/app/build/outputs/bundle/release/app-release.aab ]; then
-            cp apps/mobile/android/app/build/outputs/bundle/release/app-release.aab ci-output/aab/publish/
+            cp apps/mobile/android/app/build/outputs/bundle/release/app-release.aab ci-output/aab-release/publish/
           fi
           find ci-output -type f
       - name: Upload Android debug APK
@@ -91,16 +81,14 @@ jobs:
           path: ci-output/apk-debug/
           if-no-files-found: error
       - name: Upload Android release APK
-        if: env.ANDROID_KEYSTORE_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-android-apk-release
           path: ci-output/apk-release/
           if-no-files-found: error
-      - name: Upload Android AAB
-        if: env.ANDROID_KEYSTORE_PATH != ''
+      - name: Upload Android release AAB
         uses: actions/upload-artifact@v4
         with:
-          name: ojowacam-android-aab
-          path: ci-output/aab/
+          name: ojowacam-android-aab-release
+          path: ci-output/aab-release/
           if-no-files-found: error
