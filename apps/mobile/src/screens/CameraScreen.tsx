@@ -15,16 +15,14 @@ import { StatusBar } from 'expo-status-bar';
 import { Camera, CameraType, FlashMode } from 'expo-camera';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import * as Network from 'expo-network';
 import { CameraService } from '../native/modules';
-import { streamingService } from '../services/StreamingService';
 import { CameraDevice } from '../native/modules';
+import { signalingService } from '../services/signaling/SignalingService';
 import { streamSettings } from '../services/config/StreamSettings';
-import { connectionConfig } from '../services/config/ConnectionConfig';
 
 export type ZoomLevel = 1 | 2 | 3;
 export type FocusMode = 'continuousAutoFocus' | 'locked' | 'autoFocus';
-export type WhiteBalance = 'auto' | 'daylight' | 'cloudy' | 'tungsten' | 'fluorescent';
+export type WhiteBalance = 'auto' | 'daylight' | 'cloudy' | 'fluorescent';
 
 /** Request Android runtime camera + microphone permissions. Returns true if granted (or non-Android). */
 export async function ensureCapturePermissions(): Promise<boolean> {
@@ -45,22 +43,14 @@ export async function ensureCapturePermissions(): Promise<boolean> {
 
 export default function CameraScreen() {
   const navigation = useNavigation();
-  const [isStreaming, setIsStreaming] = React.useState(false);
-  /** True while native capture owns the camera (preview must stay unmounted). */
-  const [nativeCapture, setNativeCapture] = React.useState(false);
   const [cameras, setCameras] = React.useState<CameraDevice[]>([]);
   const [selectedCamera, setSelectedCamera] = React.useState<string>('0');
   const [facing, setFacing] = React.useState<'front' | 'back'>('back');
   const [torch, setTorch] = React.useState(false);
   const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>('portrait');
-  const [streamError, setStreamError] = React.useState<string | null>(null);
   const [permission, setPermission] = React.useState<boolean | null>(null);
-  const [previewReady, setPreviewReady] = React.useState(false);
-  const [qualityLabel, setQualityLabel] = React.useState('4K');
-  const [qualityFps, setQualityFps] = React.useState(30);
-  const [obsTarget, setObsTarget] = React.useState('');
+  const [cameraReady, setCameraReady] = React.useState(false);
   const cameraRef = React.useRef<Camera>(null);
-  const startingRef = React.useRef(false);
 
   // Digital camera controls
   const [zoomLevel, setZoomLevel] = React.useState<ZoomLevel>(1);
@@ -104,13 +94,12 @@ export default function CameraScreen() {
     }
   };
 
-  // Digital camera: apply focus mode when it changes.
+  // Apply focus mode when it changes.
   React.useEffect(() => {
-    if (!nativeCapture && !isStreaming) return;
     void CameraService.setFocusMode(focusMode).catch(() => undefined);
-  }, [focusMode, nativeCapture, isStreaming]);
+  }, [focusMode]);
 
-  // Digital camera: pinch-to-zoom responder for the preview.
+  // Pinch-to-zoom responder for the preview.
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
@@ -122,7 +111,6 @@ export default function CameraScreen() {
           if (focusPoint) setFocusPoint(null);
         },
         onPanResponderMove: (_, gestureState) => {
-          // Vertical drag: cycle zoom levels 1 → 2 → 3 → 1
           if (Math.abs(gestureState.dy) > 40 && !isPinchZooming) {
             const next = (zoomLevel % 3) + 1 as ZoomLevel;
             setZoomLevel(next);
@@ -142,86 +130,26 @@ export default function CameraScreen() {
   const handlePreviewPress = (event: { nativeEvent: { locationX: number; locationY: number } }) => {
     const { locationX, locationY } = event.nativeEvent;
     setFocusPoint({ x: locationX, y: locationY });
-    // Auto-focus on tap (only meaningful when not streaming/native capture).
-    if (!nativeCapture && !isStreaming) {
-      void CameraService.setFocusMode('autoFocus').catch(() => undefined);
-      setTimeout(() => void CameraService.setFocusMode(focusMode).catch(() => undefined), 1500);
-    }
+    void CameraService.setFocusMode('autoFocus').catch(() => undefined);
+    setTimeout(() => void CameraService.setFocusMode(focusMode).catch(() => undefined), 1500);
   };
 
-  const toggleStreaming = async () => {
-    if (nativeCapture || isStreaming) {
-      startingRef.current = false;
-      await streamingService.stopStreaming();
-      setIsStreaming(false);
-      setNativeCapture(false);
-      setPreviewReady(false);
-      return;
-    }
-    // Ensure runtime camera/mic grants before native capture opens the camera.
-    const granted = await ensureCapturePermissions();
-    if (!granted) {
-      setStreamError('Camera and microphone permissions are required to stream.');
-      return;
-    }
-    setPermission(true);
-    // Free the camera for the native capture module before streaming starts.
-    setPreviewReady(false);
-    setNativeCapture(true);
-    startingRef.current = true;
-    try {
+  // Request permissions and start the camera + signaling server on mount.
+  React.useEffect(() => {
+    let active = true;
+    void (async () => {
+      const granted = await ensureCapturePermissions();
+      setPermission(granted);
+      if (!granted) return;
       await streamSettings.load();
-      // Uses ConnectionConfig signaling URL — never hardcode localhost.
-      const success = await streamingService.startStreaming(
-        selectedCamera,
-        {
-          resolution: streamSettings.getResolution(),
-          fps: streamSettings.getFps(),
-          bitrate: streamSettings.getBitrate(),
-          codec: 'H264',
-          audio: streamSettings.isAudioEnabled(),
-        },
-      );
-      if (success) {
-        setIsStreaming(true);
-        // Native focus mode only takes effect once capture owns the camera.
-        void CameraService.setFocusMode(streamSettings.isAutoFocus() ? 'continuousAutoFocus' : 'locked');
-      } else {
-        setNativeCapture(false);
-        setIsStreaming(false);
-      }
-    } catch {
-      setNativeCapture(false);
-      setIsStreaming(false);
-    } finally {
-      startingRef.current = false;
-    }
-  };
-
-  React.useEffect(() => {
-    const handleState = (state: ReturnType<typeof streamingService.getState>) => {
-      setStreamError(state.error);
-      setIsStreaming(state.isStreaming);
-      // Service stopped/failed outside this screen — release camera ownership.
-      if (!state.isStreaming && !startingRef.current) {
-        setNativeCapture(false);
-      }
+      await CameraService.startCapture(selectedCamera, streamSettings.getResolution().split('x').map(Number)[0], streamSettings.getResolution().split('x').map(Number)[1], streamSettings.getFps());
+      await signalingService.initialize();
+      setCameraReady(true);
+    })();
+    return () => {
+      active = false;
     };
-    handleState(streamingService.getState());
-    streamingService.setOnStateChange(handleState);
-    return () => streamingService.setOnStateChange(() => undefined);
-  }, []);
-
-  const requestPermissions = React.useCallback(async () => {
-    // Runtime request for camera + mic (Android); iOS uses expo-camera prompts.
-    const granted = await ensureCapturePermissions();
-    const result = await Camera.requestCameraPermissionsAsync();
-    setPermission(granted && result.granted);
-  }, []);
-
-  React.useEffect(() => {
-    void requestPermissions();
-  }, [requestPermissions]);
+  }, [selectedCamera]);
 
   const loadCameras = async () => {
     try {
@@ -236,25 +164,11 @@ export default function CameraScreen() {
     }
   };
 
-  const refreshSettingsDisplay = React.useCallback(async () => {
-    await streamSettings.load();
-    await connectionConfig.load();
-    setQualityLabel(streamSettings.getResolutionLabel());
-    setQualityFps(streamSettings.getFps());
-    try {
-      const ip = await Network.getIpAddressAsync();
-      const url = connectionConfig.getSignalingUrl();
-      setObsTarget(ip && ip !== '0.0.0.0' ? url.replace('0.0.0.0', ip) : url);
-    } catch {
-      setObsTarget(connectionConfig.getSignalingUrl());
-    }
-  }, []);
-
   // Re-read preferences when returning from the Settings screen.
   useFocusEffect(
     React.useCallback(() => {
-      void refreshSettingsDisplay();
-    }, [refreshSettingsDisplay]),
+      void streamSettings.load();
+    }, []),
   );
 
   const toggleFacing = () => {
@@ -320,7 +234,7 @@ export default function CameraScreen() {
         <Text style={styles.permissionSubtitle}>
           Ojowacam needs access to your camera to stream feed directly to OBS.
         </Text>
-        <TouchableOpacity style={styles.primaryButton} onPress={() => void requestPermissions()}>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => void ensureCapturePermissions().then((g) => setPermission(g))}>
           <Text style={styles.primaryButtonText}>Grant Permission</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryButton} onPress={() => navigation.goBack()}>
@@ -335,11 +249,10 @@ export default function CameraScreen() {
     <View style={styles.container}>
       {/* Camera preview with digital overlays */}
       <View style={styles.preview} {...panResponder.panHandlers}>
-        {nativeCapture ? (
-          // Native CameraModule owns the camera while streaming; preview would conflict.
-          <View style={styles.streamingOverlay}>
-            <Text style={styles.streamingText}>LIVE FEED — Streaming to OBS</Text>
-            <Text style={styles.streamingSub}>{qualityLabel} @ {qualityFps}fps · {facing} camera</Text>
+        {!cameraReady ? (
+          <View style={styles.previewOverlay}>
+            <ActivityIndicator color="#fff" size="large" />
+            <Text style={styles.previewText}>Starting camera…</Text>
           </View>
         ) : (
           <Camera
@@ -347,19 +260,11 @@ export default function CameraScreen() {
             style={StyleSheet.absoluteFill}
             type={previewType}
             flashMode={torch ? FlashMode.torch : FlashMode.off}
-            onCameraReady={() => setPreviewReady(true)}
-            onMountError={(e) => console.warn('Camera mount error:', e.message)}
           />
         )}
-        {!previewReady && !nativeCapture ? (
-          <View style={styles.previewOverlay}>
-            <ActivityIndicator color="#fff" size="large" />
-            <Text style={styles.previewText}>Starting camera…</Text>
-          </View>
-        ) : null}
 
         {/* Focus point indicator (tap to focus) */}
-        {focusPoint && !nativeCapture && !isStreaming && (
+        {focusPoint && (
           <View style={[styles.focusRing, { left: focusPoint.x - 30, top: focusPoint.y - 30 }]} />
         )}
 
@@ -371,7 +276,7 @@ export default function CameraScreen() {
         )}
 
         {/* Grid overlay (rule of thirds) */}
-        {gridOverlay && !nativeCapture && (
+        {gridOverlay && (
           <View style={styles.gridOverlay}>
             <View style={[styles.gridLine, styles.gridLineTop]} />
             <View style={[styles.gridLine, styles.gridLineBottom]} />
@@ -381,30 +286,23 @@ export default function CameraScreen() {
         )}
 
         {/* Zoom indicator */}
-        {!nativeCapture && (
-          <View style={[styles.zoomIndicator, isLandscape && styles.zoomIndicatorLandscape]}>
-            <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(1)}>
-              <Text style={styles.zoomText}>1×</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(2)}>
-              <Text style={[styles.zoomText, zoomLevel === 2 && styles.zoomActive]}>2×</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(3)}>
-              <Text style={[styles.zoomText, zoomLevel === 3 && styles.zoomActive]}>3×</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        <View style={[styles.zoomIndicator, isLandscape && styles.zoomIndicatorLandscape]}>
+          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(1)}>
+            <Text style={styles.zoomText}>1×</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(2)}>
+            <Text style={[styles.zoomText, zoomLevel === 2 && styles.zoomActive]}>2×</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(3)}>
+            <Text style={[styles.zoomText, zoomLevel === 3 && styles.zoomActive]}>3×</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <SafeAreaView style={[styles.topBar, isLandscape && styles.topBarLandscape]} pointerEvents="box-none">
         <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
           <Text style={styles.iconButtonText}>✕</Text>
         </TouchableOpacity>
-
-        <View style={[styles.statusBadge, isStreaming ? styles.streamingBadge : styles.standbyBadge]}>
-          <View style={[styles.statusDot, isStreaming ? styles.liveDot : styles.standbyDot]} />
-          <Text style={styles.statusText}>{isStreaming ? 'LIVE TO OBS' : 'STANDBY'}</Text>
-        </View>
 
         <View style={styles.topActions}>
           <TouchableOpacity style={styles.iconButton} onPress={() => void toggleOrientation()}>
@@ -425,15 +323,9 @@ export default function CameraScreen() {
         ]}
         pointerEvents="none"
       >
-        <Text style={styles.infoLabel}>OUT: {qualityLabel} @ {qualityFps}fps</Text>
-        <Text style={styles.infoValue}>OBS Target: {obsTarget || 'ws://…'}</Text>
+        <Text style={styles.infoLabel}>OUT: {streamSettings.getResolution()} @ {streamSettings.getFps()}fps</Text>
+        <Text style={styles.infoValue}>OBS Target: {streamSettings.getResolution()}</Text>
       </View>
-
-      {streamError ? (
-        <View style={[styles.errorBanner, isLandscape && styles.errorBannerLandscape]}>
-          <Text style={styles.errorText}>{streamError}</Text>
-        </View>
-      ) : null}
 
       {/* Digital camera control bar. In landscape it becomes a vertical strip on
        * the right edge so the preview keeps maximum width. */}
@@ -454,9 +346,6 @@ export default function CameraScreen() {
           <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={toggleFacing}>
             <Text style={[styles.controlIcon, styles.controlIconLandscape]}>🔄</Text>
             <Text style={[styles.controlText, styles.controlTextLandscape]}>Flip</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={() => void toggleStreaming()}>
-            <Text style={[styles.controlText, styles.controlTextLandscape]}>{isStreaming ? 'Disconnect' : 'Connect'}</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -479,9 +368,6 @@ export default function CameraScreen() {
           <TouchableOpacity style={styles.controlButton} onPress={toggleFacing}>
             <Text style={styles.controlIcon}>🔄</Text>
             <Text style={styles.controlText}>Flip</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.controlButton} onPress={() => void toggleStreaming()}>
-            <Text style={styles.controlText}>{isStreaming ? 'Disconnect' : 'Connect'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -601,40 +487,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: '700',
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  standbyBadge: {
-    backgroundColor: 'rgba(28, 33, 46, 0.8)',
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  streamingBadge: {
-    backgroundColor: 'rgba(235, 87, 87, 0.2)',
-    borderColor: 'rgba(235, 87, 87, 0.4)',
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  standbyDot: {
-    backgroundColor: '#8e93a0',
-  },
-  liveDot: {
-    backgroundColor: '#eb5757',
-  },
-  statusText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
   },
   infoCard: {
     position: 'absolute',
