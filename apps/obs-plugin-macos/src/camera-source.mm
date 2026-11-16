@@ -15,6 +15,7 @@
 @property (nonatomic) OjowacamStreamReceiver *streamReceiver;
 @property (nonatomic) CVPixelBufferRef currentFrame;
 @property (nonatomic) BOOL connected;
+@property (nonatomic) BOOL streaming;
 @end
 
 // Source info for OBS
@@ -43,6 +44,7 @@ void *ojowacam_camera_create(obs_data_t *settings, obs_source_t *source)
     data->height = 1080;
     data->currentFrame = nullptr;
     data->connected = NO;
+    data->streaming = NO;
 
     const char *deviceId = obs_data_get_string(settings, "device_id");
     const char *signalingUrl = obs_data_get_string(settings, "signaling_url");
@@ -50,7 +52,11 @@ void *ojowacam_camera_create(obs_data_t *settings, obs_source_t *source)
     std::string resolvedDeviceId = deviceId ? deviceId : "";
     std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
 
+    // Do NOT auto-connect here. The user must click "Start Streaming"
+    // to begin. This makes OBS the active connection party.
 
+    return data;
+}
 void ojowacam_camera_destroy(void *data)
 {
     auto *d = static_cast<OjowacamCameraData *>(data);
@@ -95,19 +101,26 @@ void ojowacam_camera_update(void *data, obs_data_t *settings)
 
     const char *deviceId = obs_data_get_string(settings, "device_id");
     const char *signalingUrl = obs_data_get_string(settings, "signaling_url");
+    const bool streaming = obs_data_get_bool(settings, "streaming");
 
     std::string resolvedDeviceId = deviceId ? deviceId : "";
     std::string resolvedSignalingUrl = signalingUrl ? signalingUrl : "";
 
-    if (d->streamReceiver) {
+    // If streaming was turned off, disconnect
+    if (!streaming && d->streamReceiver) {
         [d->streamReceiver disconnect];
+        d->streamReceiver = nil;
+        d->connected = NO;
     }
 
-    if (!resolvedSignalingUrl.empty()) {
+    d->streaming = streaming;
+
+    // If streaming is on and we don't have a receiver yet, start connecting
+    if (streaming && !d->streamReceiver && !resolvedSignalingUrl.empty()) {
         d->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:d->source audioSource:d->source];
         [d->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
         d->connected = d->streamReceiver.isConnected;
-    } else {
+    } else if (!streaming) {
         d->connected = NO;
     }
 }
@@ -166,7 +179,19 @@ obs_properties_t *ojowacam_camera_properties(void *data)
             return true;
         });
 
+    // Start/Stop streaming: OBS actively initiates the connection to the phone.
+    obs_properties_add_button(props, "stream_toggle", data->streaming ? "Stop Streaming" : "Start Streaming", ^(obs_properties_t *p, obs_property_t *prop, void *d) {
+        auto *data = static_cast<OjowacamCameraData*>(d);
+        obs_data_t *settings = obs_source_get_settings(data->source);
+        bool current = obs_data_get_bool(settings, "streaming");
+        obs_data_set_bool(settings, "streaming", !current);
+        obs_source_update(data->source, settings);
+        obs_data_release(settings);
+        return true;
+    });
+
     obs_properties_add_bool(props, "connected", "Connected");
+    obs_properties_add_bool(props, "streaming", "Streaming Active");
 
     return props;
 }
@@ -177,12 +202,4 @@ bool ojowacam_camera_get_default_size(obs_data_t *settings, uint32_t *cx, uint32
     *cx = 1920;
     *cy = 1080;
     return true;
-}
-    if (!resolvedSignalingUrl.empty()) {
-        data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:source audioSource:source];
-        [data->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
-        data->connected = data->streamReceiver.isConnected;
-    }
-
-    return data;
 }

@@ -12,6 +12,9 @@ struct OjowacamVideoData {
     ojowacam::FrameConverter* frame_converter = nullptr;
     gs_texture_t* current_texture = nullptr;
     bool connected = false;
+    bool streaming = false;
+    std::string configured_device_id;
+    std::string configured_signaling_url;
 };
 
 obs_source_info ojowacam_video_source_info = [] {
@@ -37,22 +40,19 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
     data->width = 1920;
     data->height = 1080;
     data->frame_converter = new ojowacam::FrameConverter();
+    data->streaming = false;
 
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
 
-    std::string resolved_device_id = device_id ? device_id : "";
-    std::string resolved_signaling_url = signaling_url ? signaling_url : "";
+    data->configured_device_id = device_id ? device_id : "";
+    data->configured_signaling_url = signaling_url ? signaling_url : "";
 
-    if (!resolved_signaling_url.empty()) {
-        data->stream_receiver = new ojowacam::StreamReceiver(source, nullptr);
-        data->stream_receiver->onVideoSizeChanged = [data](uint32_t w, uint32_t h) {
-            data->width = w;
-            data->height = h;
-        };
-        data->stream_receiver->connect(resolved_device_id, resolved_signaling_url);
-        data->connected = data->stream_receiver->isConnected();
-    }
+    blog(LOG_INFO, "[Ojowacam] video_create: device_id='%s' signaling_url='%s'",
+         data->configured_device_id.c_str(), data->configured_signaling_url.c_str());
+
+    // Do NOT auto-connect here. The user must click "Start Streaming"
+    // to begin. This makes OBS the active connection party.
 
     return data;
 }
@@ -63,6 +63,7 @@ void ojowacam_video_destroy(void *data)
     if (d->stream_receiver) {
         d->stream_receiver->disconnect();
         delete d->stream_receiver;
+        d->stream_receiver = nullptr;
     }
     if (d->frame_converter) {
         delete d->frame_converter;
@@ -96,18 +97,25 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
 
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
+    const bool streaming = obs_data_get_bool(settings, "streaming");
 
     std::string resolved_device_id = device_id ? device_id : "";
     std::string resolved_signaling_url = signaling_url ? signaling_url : "";
 
-    if (d->stream_receiver) {
+    d->configured_device_id = resolved_device_id;
+    d->configured_signaling_url = resolved_signaling_url;
+    d->streaming = streaming;
+
+    // If streaming was turned off, disconnect
+    if (!streaming && d->stream_receiver) {
         d->stream_receiver->disconnect();
         delete d->stream_receiver;
         d->stream_receiver = nullptr;
+        d->connected = false;
     }
-    d->connected = false;
 
-    if (!resolved_signaling_url.empty()) {
+    // If streaming is on and we don't have a receiver yet, start connecting
+    if (streaming && !d->stream_receiver && !resolved_signaling_url.empty()) {
         d->stream_receiver = new ojowacam::StreamReceiver(d->source, d->source);
         d->stream_receiver->onVideoSizeChanged = [d](uint32_t w, uint32_t h) {
             d->width = w;
@@ -116,6 +124,8 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
         if (d->stream_receiver->connect(resolved_device_id, resolved_signaling_url)) {
             d->connected = true;
         }
+    } else if (!streaming) {
+        d->connected = false;
     }
 }
 
@@ -174,7 +184,19 @@ obs_properties_t *ojowacam_video_properties(void *data)
         return true;
     });
 
+    // Start/Stop streaming: OBS actively initiates the connection to the phone.
+    obs_properties_add_button(props, "stream_toggle", d->streaming ? "Stop Streaming" : "Start Streaming", [](obs_properties_t*, obs_property_t*, void* data) {
+        auto *d = static_cast<OjowacamVideoData*>(data);
+        obs_data_t *settings = obs_source_get_settings(d->source);
+        bool current = obs_data_get_bool(settings, "streaming");
+        obs_data_set_bool(settings, "streaming", !current);
+        obs_source_update(d->source, settings);
+        obs_data_release(settings);
+        return true;
+    });
+
     obs_properties_add_bool(props, "connected", "Connected");
+    obs_properties_add_bool(props, "streaming", "Streaming Active");
 
     obs_properties_add_int(props, "resolution_width", "Width", 1, 7680, 1);
     obs_properties_add_int(props, "resolution_height", "Height", 1, 4320, 1);

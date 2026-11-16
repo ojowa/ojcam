@@ -89,11 +89,9 @@ export class StreamingService {
           void WebRTCService.createOffer(true).catch((error) => {
             console.warn('Failed to re-offer to the new peer:', error);
           });
-        } else {
-          // Nothing is streaming yet: start the video session automatically so
-          // the picture appears in OBS as soon as the peer connects.
-          void this.autoStartStreaming();
         }
+        // Nothing is streaming yet: wait for the user to explicitly start
+        // streaming from the Camera screen. Do not auto-start.
       },
       onDisconnected: () => {
         this.state.isConnected = false;

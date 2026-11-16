@@ -18,6 +18,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { CameraService } from '../native/modules';
 import { CameraDevice } from '../native/modules';
 import { signalingService } from '../services/signaling/SignalingService';
+import { streamingService } from '../services/StreamingService';
 import { streamSettings } from '../services/config/StreamSettings';
 
 export type ZoomLevel = 1 | 2 | 3;
@@ -63,6 +64,10 @@ export default function CameraScreen() {
   const [focusPoint, setFocusPoint] = React.useState<{ x: number; y: number } | null>(null);
   const [isPinchZooming, setIsPinchZooming] = React.useState(false);
   const [pinchStartZoom, setPinchStartZoom] = React.useState<number>(1.0);
+
+  // Streaming state
+  const [isStreaming, setIsStreaming] = React.useState(false);
+  const [streamError, setStreamError] = React.useState<string | null>(null);
 
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
@@ -134,22 +139,19 @@ export default function CameraScreen() {
     setTimeout(() => void CameraService.setFocusMode(focusMode).catch(() => undefined), 1500);
   };
 
-  // Request permissions and start the camera + signaling server on mount.
+  // Request permissions on mount. Camera + signaling start only when the user
+  // taps "Start Streaming". No auto-connection.
   React.useEffect(() => {
     let active = true;
     void (async () => {
       const granted = await ensureCapturePermissions();
       setPermission(granted);
-      if (!granted) return;
-      await streamSettings.load();
-      await CameraService.startCapture(selectedCamera, streamSettings.getResolution().split('x').map(Number)[0], streamSettings.getResolution().split('x').map(Number)[1], streamSettings.getFps());
-      await signalingService.initialize();
-      setCameraReady(true);
+      setCameraReady(granted);
     })();
     return () => {
       active = false;
     };
-  }, [selectedCamera]);
+  }, []);
 
   const loadCameras = async () => {
     try {
@@ -216,6 +218,44 @@ export default function CameraScreen() {
       });
     }, 1000);
   };
+
+  // Start streaming: start camera capture, init signaling, begin WebRTC to OBS.
+  const startStreaming = async () => {
+    if (isStreaming) return;
+    setStreamError(null);
+    try {
+      await streamSettings.load();
+      await CameraService.startCapture(selectedCamera, streamSettings.getResolution().split('x').map(Number)[0], streamSettings.getResolution().split('x').map(Number)[1], streamSettings.getFps());
+      await signalingService.initialize();
+      setCameraReady(true);
+      setIsStreaming(true);
+    } catch (error) {
+      setStreamError(error instanceof Error ? error.message : 'Failed to start streaming');
+    }
+  };
+
+  // Stop streaming: release camera, close signaling, reset state.
+  const stopStreaming = async () => {
+    if (!isStreaming) return;
+    try {
+      await streamingService.stopStreaming();
+    } catch {
+      /* ignore stop errors */
+    }
+    signalingService.disconnect();
+    setCameraReady(false);
+    setIsStreaming(false);
+    setStreamError(null);
+  };
+
+  // Listen to streaming state changes from the service.
+  React.useEffect(() => {
+    const unsubscribe = streamingService.setOnStateChange((state) => {
+      setIsStreaming(state.isStreaming);
+      setStreamError(state.error || null);
+    });
+    return () => unsubscribe();
+  }, []);
 
   React.useEffect(() => {
     loadCameras();
@@ -334,6 +374,10 @@ export default function CameraScreen() {
        * the right edge so the preview keeps maximum width. */}
       {isLandscape ? (
         <View style={styles.bottomBarLandscape}>
+          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={isStreaming ? stopStreaming : startStreaming}>
+            <Text style={[styles.controlIcon, styles.controlIconLandscape]}>{isStreaming ? '⏹' : '▶'}</Text>
+            <Text style={[styles.controlText, styles.controlTextLandscape]}>{isStreaming ? 'Stop' : 'Stream'}</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={() => setTorch(!torch)}>
             <Text style={[styles.controlIcon, styles.controlIconLandscape]}>{torch ? '⚡' : '🔌'}</Text>
             <Text style={[styles.controlText, styles.controlTextLandscape]}>Flash</Text>
@@ -353,6 +397,10 @@ export default function CameraScreen() {
         </View>
       ) : (
         <View style={styles.bottomBar}>
+          <TouchableOpacity style={[styles.controlButton, styles.streamingButton]} onPress={isStreaming ? stopStreaming : startStreaming}>
+            <Text style={[styles.controlIcon, styles.streamingIcon]}>{isStreaming ? '⏹' : '▶'}</Text>
+            <Text style={[styles.controlText, styles.streamingText]}>{isStreaming ? 'Stop Streaming' : 'Start Streaming'}</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.controlButton} onPress={() => setTorch(!torch)}>
             <Text style={styles.controlIcon}>{torch ? '⚡' : '🔌'}</Text>
             <Text style={styles.controlText}>Flash</Text>
@@ -565,6 +613,25 @@ const styles = StyleSheet.create({
     color: '#c9d1d9',
     fontSize: 10,
     fontWeight: '500',
+  },
+  streamingButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 48,
+    backgroundColor: '#0a84ff',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginBottom: 6,
+  },
+  streamingIcon: {
+    fontSize: 18,
+    marginBottom: 2,
+  },
+  streamingText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
 
   /* --- Landscape overrides --- */

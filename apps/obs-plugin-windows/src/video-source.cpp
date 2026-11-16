@@ -15,8 +15,11 @@ struct OjowacamVideoData {
     ojowacam::FrameConverter* frame_converter = nullptr;
     gs_texture_t* current_texture = nullptr;
     bool connected = false;
-    // Last device this source connected to (name + ip), shown in properties.
+    bool streaming = false;  // User explicitly started streaming
     std::string connected_device;
+    std::string configured_device_id;
+    std::string configured_signaling_url;
+    bool configured_auto_discover = false;
 };
 
 obs_source_info ojowacam_video_source_info = [] {
@@ -40,6 +43,7 @@ obs_source_info ojowacam_video_source_info = [] {
         // same-network auto-discovery without losing their stored URL.
         obs_data_set_default_bool(settings, "auto_discover", true);
         obs_data_set_default_bool(settings, "enabled", true);
+        obs_data_set_default_bool(settings, "streaming", false);
         obs_data_set_default_double(settings, "sample_rate", 48000.0);
         obs_data_set_default_int(settings, "channels", 2);
         obs_data_set_default_string(settings, "signaling_url", "");
@@ -55,30 +59,23 @@ void *ojowacam_video_create(obs_data_t *settings, obs_source_t *source)
     data->height = 1080;
     data->sample_rate = (float)obs_data_get_double(settings, "sample_rate");
     data->channels = (int)obs_data_get_int(settings, "channels");
+    data->streaming = false;
     data->frame_converter = new ojowacam::FrameConverter();
 
     const char* device_id = obs_data_get_string(settings, "device_id");
     const char* signaling_url = obs_data_get_string(settings, "signaling_url");
     const bool auto_discover = obs_data_get_bool(settings, "auto_discover");
 
-    std::string resolved_device_id = device_id ? device_id : "";
-    std::string resolved_signaling_url = signaling_url ? signaling_url : "";
-    blog(LOG_INFO, "[Ojowacam] video_create: device_id='%s' signaling_url='%s' auto_discover=%d",
-         resolved_device_id.c_str(), resolved_signaling_url.c_str(), auto_discover ? 1 : 0);
+    data->configured_device_id = device_id ? device_id : "";
+    data->configured_signaling_url = signaling_url ? signaling_url : "";
+    data->configured_auto_discover = auto_discover;
 
-    if (!resolved_signaling_url.empty() || auto_discover) {
-        data->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url, auto_discover);
-        if (data->stream_receiver) {
-            data->stream_receiver->setVideoSource(source);
-            data->stream_receiver->setAudioSource(source);
-            data->stream_receiver->onVideoSizeChanged = [data](uint32_t w, uint32_t h) {
-                data->width = w;
-                data->height = h;
-            };
-            data->connected = data->stream_receiver->isConnected();
-        }
-    }
+    blog(LOG_INFO, "[Ojowacam] video_create: device_id='%s' signaling_url='%s' auto_discover=%d",
+         data->configured_device_id.c_str(), data->configured_signaling_url.c_str(),
+         data->configured_auto_discover ? 1 : 0);
+
+    // Do NOT auto-connect here. The user must click "Start Streaming"
+    // to begin. This makes OBS the active connection party.
 
     return data;
 }
@@ -90,6 +87,7 @@ void ojowacam_video_destroy(void *data)
         d->stream_receiver->setVideoSource(nullptr);
         d->stream_receiver->setAudioSource(nullptr);
         d->stream_receiver->onVideoSizeChanged = nullptr;
+        d->stream_receiver->disconnect();
         d->stream_receiver.reset();
     }
     if (d->frame_converter) {
@@ -131,17 +129,28 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
     blog(LOG_INFO, "[Ojowacam] video_update: device_id='%s' signaling_url='%s' auto_discover=%d",
          resolved_device_id.c_str(), resolved_signaling_url.c_str(), auto_discover ? 1 : 0);
 
-    if (d->stream_receiver) {
+    // Update stored configuration
+    d->configured_device_id = resolved_device_id;
+    d->configured_signaling_url = resolved_signaling_url;
+    d->configured_auto_discover = auto_discover;
+    d->streaming = obs_data_get_bool(settings, "streaming");
+
+    // If streaming was turned off, disconnect
+    if (!d->streaming && d->stream_receiver) {
         d->stream_receiver->setVideoSource(nullptr);
         d->stream_receiver->setAudioSource(nullptr);
         d->stream_receiver->onVideoSizeChanged = nullptr;
+        d->stream_receiver->disconnect();
         d->stream_receiver.reset();
+        d->connected = false;
+        d->connected_device.clear();
     }
-    d->connected = false;
 
-    if (!resolved_signaling_url.empty() || auto_discover) {
+    // If streaming is on and we don't have a receiver yet, start connecting
+    if (d->streaming && !d->stream_receiver &&
+        (!resolved_signaling_url.empty() || d->configured_auto_discover)) {
         d->stream_receiver = ojowacam::SharedSession::acquire(
-            resolved_device_id, resolved_signaling_url, auto_discover);
+            resolved_device_id, resolved_signaling_url, d->configured_auto_discover);
         if (d->stream_receiver) {
             d->stream_receiver->setVideoSource(d->source);
             d->stream_receiver->setAudioSource(d->source);
@@ -150,7 +159,6 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
                 d->height = h;
             };
             d->connected = d->stream_receiver->isConnected();
-            // Record which device we are connected to (shown in properties).
             if (d->connected) {
                 auto *dm = ojowacam::DeviceManager::GetInstance();
                 auto devices = dm->GetDevices();
@@ -229,11 +237,24 @@ obs_properties_t *ojowacam_video_properties(void *data)
             d->stream_receiver.reset();
         }
         d->connected = false;
+        d->streaming = false;
         d->connected_device.clear();
 
         obs_data_t *settings = obs_source_get_settings(d->source);
         obs_data_set_string(settings, "signaling_url", "");
         obs_data_set_string(settings, "device_id", "");
+        obs_data_set_bool(settings, "streaming", false);
+        obs_source_update(d->source, settings);
+        obs_data_release(settings);
+        return true;
+    });
+
+    // Start/Stop streaming: OBS actively initiates the connection to the phone.
+    obs_properties_add_button(props, "stream_toggle", d->streaming ? "Stop Streaming" : "Start Streaming", [](obs_properties_t*, obs_property_t*, void* data) {
+        auto *d = static_cast<OjowacamVideoData*>(data);
+        obs_data_t *settings = obs_source_get_settings(d->source);
+        bool current = obs_data_get_bool(settings, "streaming");
+        obs_data_set_bool(settings, "streaming", !current);
         obs_source_update(d->source, settings);
         obs_data_release(settings);
         return true;
@@ -247,6 +268,7 @@ obs_properties_t *ojowacam_video_properties(void *data)
     obs_property_set_long_description(obs_properties_get(props, "connected_device"),
         connected_label.c_str());
 
+    obs_properties_add_bool(props, "streaming", "Streaming Active");
     obs_properties_add_bool(props, "connected", "Connected");
     obs_properties_add_float(props, "sample_rate", "Sample Rate (Hz)", 8000.0f, 192000.0f, 1.0f);
     obs_properties_add_int(props, "channels", "Channels", 1, 8, 1);
