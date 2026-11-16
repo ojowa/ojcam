@@ -9,7 +9,6 @@ export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
   const [qualityLabel, setQualityLabel] = React.useState('4K');
   const [qualityFps, setQualityFps] = React.useState(30);
-  const [audioEnabled, setAudioEnabled] = React.useState(true);
 
   // Reflect the saved stream preferences whenever this screen regains focus.
   useFocusEffect(
@@ -20,7 +19,6 @@ export default function HomeScreen() {
         if (!active) return;
         setQualityLabel(streamSettings.getResolutionLabel());
         setQualityFps(streamSettings.getFps());
-        setAudioEnabled(streamSettings.isAudioEnabled());
       })();
       return () => {
         active = false;
@@ -46,13 +44,9 @@ export default function HomeScreen() {
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Quick Settings</Text>
-        <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('Settings')}>
+        <TouchableOpacity style={[styles.row, styles.lastRow]} onPress={() => navigation.navigate('Settings')}>
           <Text style={styles.rowLabel}>Quality</Text>
           <Text style={styles.rowValue}>{qualityLabel} {qualityFps}fps</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.row, styles.lastRow]} onPress={() => navigation.navigate('Settings')}>
-          <Text style={styles.rowLabel}>Audio</Text>
-          <Text style={styles.rowValue}>{audioEnabled ? 'On' : 'Off'}</Text>
         </TouchableOpacity>
       </View>
 

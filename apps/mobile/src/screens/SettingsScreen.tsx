@@ -28,7 +28,6 @@ export default function SettingsScreen() {
   // Stream preferences (persisted via StreamSettings).
   const [resolution, setResolution] = React.useState<StreamResolution>('3840x2160');
   const [fps, setFps] = React.useState<StreamFps>(30);
-  const [audioEnabled, setAudioEnabled] = React.useState(true);
   const [autoFocus, setAutoFocus] = React.useState(true);
 
   React.useEffect(() => {
@@ -38,7 +37,6 @@ export default function SettingsScreen() {
       setEndpoint(connectionConfig.getSignalingUrl());
       setResolution(streamSettings.getResolution());
       setFps(streamSettings.getFps());
-      setAudioEnabled(streamSettings.isAudioEnabled());
       setAutoFocus(streamSettings.isAutoFocus());
     })();
   }, []);
@@ -74,11 +72,6 @@ export default function SettingsScreen() {
   const chooseFps = async (value: StreamFps) => {
     setFps(value);
     await streamSettings.setFps(value);
-  };
-
-  const toggleAudio = async (value: boolean) => {
-    setAudioEnabled(value);
-    await streamSettings.setAudioEnabled(value);
   };
 
   const toggleAutoFocus = async (value: boolean) => {
@@ -177,22 +170,7 @@ export default function SettingsScreen() {
 
         {/* Toggle Settings Section */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Hardware & Audio</Text>
-
-          {/* Audio Toggle */}
-          <View style={styles.toggleRow}>
-            <View style={styles.toggleTextWrap}>
-              <Text style={styles.toggleLabel}>Microphone Audio</Text>
-              <Text style={styles.toggleSubtext}>Stream live phone audio to OBS</Text>
-            </View>
-            <Switch
-              trackColor={{ false: '#212833', true: '#0a84ff' }}
-              thumbColor={'#fff'}
-              ios_backgroundColor="#212833"
-              onValueChange={(v) => void toggleAudio(v)}
-              value={audioEnabled}
-            />
-          </View>
+          <Text style={styles.sectionTitle}>Hardware</text>
 
           {/* Auto-Focus Toggle */}
           <View style={[styles.toggleRow, styles.lastToggleRow]}>

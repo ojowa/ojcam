@@ -308,10 +308,8 @@ export class StreamingService {
       const outWidth = capture && capture.width > 0 ? capture.width : this.width;
       const outHeight = capture && capture.height > 0 ? capture.height : this.height;
       console.log(`[stream] capture ok: ${outWidth}x${outHeight}`);
-      if (config.audio !== false) {
-        console.log('[stream] step: startAudio');
-        await AudioService.startRecording();
-      }
+      console.log('[stream] step: startAudio');
+      await AudioService.startRecording();
       console.log('[stream] step: initEncoder');
       try {
         await EncoderService.initEncoder(outWidth, outHeight, config.bitrate, config.fps);
@@ -330,10 +328,8 @@ export class StreamingService {
       await WebRTCService.createPeerConnection(this.iceServers);
       console.log('[stream] step: addVideoTrack');
       await WebRTCService.addVideoTrack('ojowacam-video');
-      if (config.audio !== false) {
-        console.log('[stream] step: addAudioTrack');
-        await WebRTCService.addAudioTrack('ojowacam-audio');
-      }
+      console.log('[stream] step: addAudioTrack');
+      await WebRTCService.addAudioTrack('ojowacam-audio');
       console.log('[stream] step: createOffer');
       // iceRestart: the peer may have re-created its PeerConnection since the
       // last session - a fresh ICE generation keeps both sides in sync.

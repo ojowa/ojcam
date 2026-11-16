@@ -1,9 +1,10 @@
 ﻿/**
  * StreamSettings.ts
  *
- * Persisted streaming preferences: resolution, framerate, microphone, and
- * autofocus. CameraScreen feeds these into startStreaming; bitrate is
- * derived from resolution x fps instead of being hardcoded.
+ * Persisted streaming preferences: resolution, framerate, and autofocus.
+ * Microphone audio is always included with video in a single stream source.
+ * CameraScreen feeds these into startStreaming; bitrate is derived from
+ * resolution x fps instead of being hardcoded.
  */
 
 import * as SecureStore from 'expo-secure-store';
@@ -17,7 +18,6 @@ export type StreamFps = 30 | 60;
 interface StoredSettings {
   resolution: StreamResolution;
   fps: StreamFps;
-  audioEnabled: boolean;
   autoFocus: boolean;
 }
 
@@ -26,7 +26,6 @@ const VALID_RESOLUTIONS: readonly StreamResolution[] = ['3840x2160', '1920x1080'
 const DEFAULTS: StoredSettings = {
   resolution: '3840x2160',
   fps: 30,
-  audioEnabled: true,
   autoFocus: true,
 };
 
@@ -47,9 +46,6 @@ export class StreamSettings {
         if (parsed.fps === 30 || parsed.fps === 60) {
           this.settings.fps = parsed.fps;
         }
-        if (typeof parsed.audioEnabled === 'boolean') {
-          this.settings.audioEnabled = parsed.audioEnabled;
-        }
         if (typeof parsed.autoFocus === 'boolean') {
           this.settings.autoFocus = parsed.autoFocus;
         }
@@ -66,10 +62,6 @@ export class StreamSettings {
 
   getFps(): StreamFps {
     return this.settings.fps;
-  }
-
-  isAudioEnabled(): boolean {
-    return this.settings.audioEnabled;
   }
 
   isAutoFocus(): boolean {
@@ -119,12 +111,6 @@ export class StreamSettings {
   async setFps(fps: StreamFps): Promise<void> {
     if (fps !== 30 && fps !== 60) return;
     this.settings.fps = fps;
-    this.loaded = true;
-    await this.persist();
-  }
-
-  async setAudioEnabled(enabled: boolean): Promise<void> {
-    this.settings.audioEnabled = enabled;
     this.loaded = true;
     await this.persist();
   }

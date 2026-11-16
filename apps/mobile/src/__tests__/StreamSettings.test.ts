@@ -17,13 +17,12 @@ describe('StreamSettings', () => {
     setItemAsync.mockResolvedValue(undefined);
   });
 
-  it('defaults to 4K at 30fps with audio and autofocus on', async () => {
+  it('defaults to 4K at 30fps with autofocus on', async () => {
     const s = new StreamSettings();
     await s.load();
     expect(s.getResolution()).toBe('3840x2160');
     expect(s.getResolutionLabel()).toBe('4K');
     expect(s.getFps()).toBe(30);
-    expect(s.isAudioEnabled()).toBe(true);
     expect(s.isAutoFocus()).toBe(true);
     expect(s.getBitrate()).toBe(20000000);
   });
@@ -50,15 +49,13 @@ describe('StreamSettings', () => {
     await s.load();
     await s.setResolution('1920x1080');
     await s.setFps(60);
-    await s.setAudioEnabled(false);
     await s.setAutoFocus(false);
 
-    expect(setItemAsync).toHaveBeenCalledTimes(4);
+    expect(setItemAsync).toHaveBeenCalledTimes(3);
     const stored = setItemAsync.mock.calls[setItemAsync.mock.calls.length - 1][1] as string;
     expect(JSON.parse(stored)).toMatchObject({
       resolution: '1920x1080',
       fps: 60,
-      audioEnabled: false,
       autoFocus: false,
     });
 
@@ -68,7 +65,6 @@ describe('StreamSettings', () => {
     expect(reloaded.getResolution()).toBe('1920x1080');
     expect(reloaded.getResolutionLabel()).toBe('1080p');
     expect(reloaded.getFps()).toBe(60);
-    expect(reloaded.isAudioEnabled()).toBe(false);
     expect(reloaded.isAutoFocus()).toBe(false);
     expect(reloaded.getBitrate()).toBe(12000000);
   });
