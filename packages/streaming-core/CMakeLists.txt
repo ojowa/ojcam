@@ -21,7 +21,7 @@ add_library(streaming-core ${SOURCES})
 # ---------------------------------------------------------------------------
 # Optional dependencies: FFmpeg (H264 hardware decode), Opus (audio decode),
 # WebRTC (native peer connection), Bonjour/Avahi (mDNS discovery)
-// ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 # FFmpeg for hardware-accelerated H264 decoding
 find_package(FFmpeg QUIET)
