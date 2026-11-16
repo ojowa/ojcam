@@ -455,13 +455,8 @@ export default function CameraScreen() {
             <Text style={[styles.controlIcon, styles.controlIconLandscape]}>🔄</Text>
             <Text style={[styles.controlText, styles.controlTextLandscape]}>Flip</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.streamButton, styles.streamButtonLandscape, isStreaming ? styles.stopButton : styles.goLiveButton]}
-            onPress={() => void toggleStreaming()}
-          >
-            <Text style={[styles.streamButtonText, styles.streamButtonTextLandscape]}>
-              {isStreaming ? 'Stop Stream' : 'Go Live'}
-            </Text>
+          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={() => void toggleStreaming()}>
+            <Text style={[styles.controlText, styles.controlTextLandscape]}>{isStreaming ? 'Disconnect' : 'Connect'}</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -485,12 +480,8 @@ export default function CameraScreen() {
             <Text style={styles.controlIcon}>🔄</Text>
             <Text style={styles.controlText}>Flip</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.streamButton, isStreaming ? styles.stopButton : styles.goLiveButton]}
-            onPress={() => void toggleStreaming()}
-          >
-            <Text style={styles.streamButtonText}>{isStreaming ? 'Stop Stream' : 'Go Live'}</Text>
+          <TouchableOpacity style={styles.controlButton} onPress={() => void toggleStreaming()}>
+            <Text style={styles.controlText}>{isStreaming ? 'Disconnect' : 'Connect'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -720,30 +711,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '500',
   },
-  streamButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  goLiveButton: {
-    backgroundColor: '#0a84ff',
-  },
-  stopButton: {
-    backgroundColor: '#eb5757',
-  },
-  streamButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
 
   /* --- Landscape overrides --- */
   errorBanner: {
@@ -875,14 +842,6 @@ const styles = StyleSheet.create({
   },
   controlTextLandscape: {
     fontSize: 10,
-  },
-  streamButtonLandscape: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 14,
-  },
-  streamButtonTextLandscape: {
-    fontSize: 14,
   },
   zoomIndicatorLandscape: {
     bottom: 'auto',
