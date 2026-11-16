@@ -2,7 +2,7 @@
  * BeaconDiscovery.ts
  *
  * Same-network UDP discovery. While the signaling server is running, the
- * phone broadcasts "OJOWACAM|1|role=phone|ws=<port>" to 255.255.255.255:8767
+ * phone broadcasts "OJOWACAM|1|role=phone|ws=<port>" to 255.255.255.255:8765
  * every 1.5 s and listens for the OBS plugin's answering beacon
  * ("OJOWACAM|1|role=obs|ws=<port>"). The plugin's WebSocket server is then
  * dialed by SignalingServer (see noteObsTarget). Addresses always come from
@@ -12,7 +12,7 @@
 import { utf8Decode, utf8Encode } from '../../utils/utf8';
 
 export const BEACON_MAGIC = 'OJOWACAM|1';
-export const DISCOVERY_PORT = 8767;
+export const DISCOVERY_PORT = 8765;
 const BEACON_INTERVAL_MS = 1500;
 
 export interface ObsTarget {
