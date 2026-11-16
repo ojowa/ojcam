@@ -1,8 +1,6 @@
 name: C++ Streaming Core Build
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

@@ -1,8 +1,6 @@
 name: Android Emulator Test
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +17,7 @@ env:
 
 jobs:
   mobile-run:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     continue-on-error: false
     steps:
