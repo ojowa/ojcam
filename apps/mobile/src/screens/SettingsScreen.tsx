@@ -170,7 +170,7 @@ export default function SettingsScreen() {
 
         {/* Toggle Settings Section */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Hardware</text>
+          <Text style={styles.sectionTitle}>Hardware</Text>
 
           {/* Auto-Focus Toggle */}
           <View style={[styles.toggleRow, styles.lastToggleRow]}>
