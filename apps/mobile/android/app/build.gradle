@@ -128,10 +128,6 @@ android {
             shrinkResources (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-            // Disable Metro dev server connection in release builds so the
-            // app uses the pre-bundled JS bundle instead of trying to connect
-            // to a running Metro instance at runtime.
-            devModeEnabled false
         }
     }
 }
