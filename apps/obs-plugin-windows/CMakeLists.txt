@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
+# Plugin version — single source of truth for the DLL (properties panel +
+# log), data/module.json, and the installers (keep *.wxs ProductVersion in
+# sync when bumping).
 project(ojowacam-obs-windows-plugin VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -104,6 +107,10 @@ set(PLUGIN_SOURCES
 
 add_library(ojowacam-obs MODULE ${PLUGIN_SOURCES})
 
+# Bake the project version into the DLL for the source properties panel and
+# the load-time log line (see src/video-source.cpp, src/obs-registration.cpp).
+target_compile_definitions(ojowacam-obs PRIVATE "OJOWACAM_VERSION=\"${PROJECT_VERSION}\"")
+
 target_link_libraries(ojowacam-obs PRIVATE ${OBS_LIBRARIES} streaming-core)
 
 # Stage FFmpeg runtime DLLs next to ojowacam-obs.dll so OBS resolves them
@@ -139,8 +146,9 @@ if(WebRTC_FOUND)
     target_compile_definitions(ojowacam-obs PRIVATE OJO_WEBRTC_ENABLED)
 endif()
 
-# Package layout
+# Package layout (substitute @PROJECT_VERSION@ in module.json so the
+# manifest's version always matches the DLL built above).
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/package/data")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/data/module.json
                ${CMAKE_BINARY_DIR}/package/data/module.json
-               COPYONLY)
+               @ONLY)

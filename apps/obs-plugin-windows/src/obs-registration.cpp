@@ -10,8 +10,17 @@ const char *obs_module_name(void)
     return "Ojowacam OBS Plugin";
 }
 
+const char *obs_module_description(void)
+{
+    return "Turn your smartphone into a webcam and microphone for OBS Studio "
+           "(v" OJOWACAM_VERSION ")";
+}
+
 bool obs_module_load(void)
 {
+    // First log line on startup: which plugin build OBS just loaded.
+    blog(LOG_INFO, "[Ojowacam] OBS plugin v%s loading", OJOWACAM_VERSION);
+
     // Register Ojowacam video source (also outputs audio from the phone's
     // microphone over the same signaling connection).
     obs_register_source(&ojowacam_video_source_info);

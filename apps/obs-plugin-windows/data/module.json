@@ -1,5 +1,6 @@
 {
   "id": "ojowacam-obs-windows",
+  "version": "@PROJECT_VERSION@",
   "name": "Ojowacam OBS Plugin",
   "description": "Turn your smartphone into a webcam and microphone for OBS Studio",
   "author": "Ojowacam Team",

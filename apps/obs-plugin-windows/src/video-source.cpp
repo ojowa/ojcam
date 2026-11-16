@@ -181,6 +181,13 @@ obs_properties_t *ojowacam_video_properties(void *data)
     auto *d = static_cast<OjowacamVideoData*>(data);
     auto *props = obs_properties_create();
 
+    // Read-only version indication for the loaded DLL. OJOWACAM_VERSION is
+    // baked in from CMake's project(VERSION ...) at build time, and with no
+    // settings value stored OBS renders this as a plain non-editable label.
+    obs_properties_add_text(props, "plugin_version",
+                            "Ojowacam OBS Plugin v" OJOWACAM_VERSION,
+                            OBS_TEXT_INFO);
+
     obs_property_t *device_list = obs_properties_add_list(
         props, "device_id", "Device", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
