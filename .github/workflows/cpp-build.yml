@@ -29,8 +29,9 @@ jobs:
 
       - name: Stage OBS headers and import lib
         run: |
+          rm -rf .deps/obs-studio/libobs .deps/obs-lib
           mkdir -p .deps/obs-studio/libobs .deps/obs-lib
-          cp -r obs-studio/libobs .deps/obs-studio/libobs
+          cp -r obs-studio/libobs/. .deps/obs-studio/libobs/
           cmake --build obs-studio/build --config Release --target obs 2>/dev/null || true
           if [ -f obs-studio/build/libobs/libobs.so ]; then
             cp obs-studio/build/libobs/libobs.so .deps/obs-lib/
