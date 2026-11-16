@@ -72,15 +72,18 @@ include_directories(
 # Add streaming-core library
 add_subdirectory(streaming-core)
 
-# macOS-specific source files (Objective-C++)
+# Bake the project version into the bundle for the source properties panel and
+# the load-time log line (see src/camera-source.mm, src/obs-registration.cpp).
+target_compile_definitions(ojowacam-obs-macos PRIVATE "OJOWACAM_VERSION=\"${PROJECT_VERSION}\"")
+
+# macOS-specific source files (Objective-C++ for the source, C++ elsewhere)
 set(MACOS_SOURCES
-    src/plugin.mm
+    src/obs-registration.cpp
     src/camera-source.mm
-    src/device-manager.mm
-    src/stream-receiver.mm
     shared/src/device-manager.cpp
     shared/src/stream-receiver.cpp
     shared/src/frame-converter.cpp
+    shared/src/shared-session.cpp
 )
 
 add_library(ojowacam-obs-macos MODULE ${MACOS_SOURCES})
@@ -111,7 +114,8 @@ if(WebRTC_FOUND)
     target_compile_definitions(ojowacam-obs-macos PRIVATE OJO_WEBRTC_ENABLED)
 endif()
 
-# Copy module.json next to the plugin binary
+# Copy module.json next to the plugin binary (version substituted from
+# project(VERSION ...) so the manifest always matches the built bundle).
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/data/module.json
                ${CMAKE_BINARY_DIR}/data/obs-plugins/ojowacam-obs/module.json
-               COPYONLY)
+               @ONLY)

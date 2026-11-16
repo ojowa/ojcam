@@ -274,6 +274,8 @@ struct FFmpegH264Decoder::Impl {
     AVBufferRef* hw_device_ctx = nullptr;
     enum AVPixelFormat hw_pix_fmt = AV_PIX_FMT_NONE;
     bool use_hardware = false;
+    std::string codec_name = "H264";
+    bool h264_family = true; // hardware accel + Annex B applies only here
     int width = 0;
     int height = 0;
     bool initialized = false;
@@ -287,34 +289,54 @@ struct FFmpegH264Decoder::Impl {
 };
 
 FFmpegH264Decoder::FFmpegH264Decoder() : impl_(new Impl()) {}
-FFmpegH264Decoder::~FFmpegH264Decoder() { release(); delete impl_; }
+FFmpegH264Decoder::~FFmpegH264Decoder() { release(); /* impl_ frees Impl */ }
 
 bool FFmpegH264Decoder::initialize(int width, int height, const std::string& codec) {
-    (void)codec;
     if (impl_->initialized) return true;
+
+    // Resolve the negotiated codec. Uppercase without locale.
+    std::string upper;
+    upper.reserve(codec.size());
+    for (char c : codec) {
+        upper += (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+    }
+    AVCodecID codec_id = AV_CODEC_ID_H264;
+    if (upper == "VP8") {
+        codec_id = AV_CODEC_ID_VP8;
+    } else if (upper == "VP9") {
+        codec_id = AV_CODEC_ID_VP9;
+    } else if (upper == "H265" || upper == "HEVC") {
+        codec_id = AV_CODEC_ID_HEVC;
+    }
+    impl_->codec_name = upper.empty() ? "H264" : upper;
+    impl_->h264_family = (codec_id == AV_CODEC_ID_H264 || codec_id == AV_CODEC_ID_HEVC);
 
     impl_->use_hardware = false;
 
+    // Hardware acceleration (D3D11VA/VideoToolbox/VAAPI) only applies to the
+    // H264 family; VP8/VP9 decode in software.
+    if (impl_->h264_family) {
 #ifdef _WIN32
-    if (av_hwdevice_ctx_create(&impl_->hw_device_ctx, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) >= 0) {
-        impl_->use_hardware = true;
-        impl_->hw_pix_fmt = AV_PIX_FMT_D3D11;
-    }
+        if (av_hwdevice_ctx_create(&impl_->hw_device_ctx, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) >= 0) {
+            impl_->use_hardware = true;
+            impl_->hw_pix_fmt = AV_PIX_FMT_D3D11;
+        }
 #elif defined(__APPLE__)
-    if (av_hwdevice_ctx_create(&impl_->hw_device_ctx, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0) >= 0) {
-        impl_->use_hardware = true;
-        impl_->hw_pix_fmt = AV_PIX_FMT_VIDEOTOOLBOX;
-    }
+        if (av_hwdevice_ctx_create(&impl_->hw_device_ctx, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0) >= 0) {
+            impl_->use_hardware = true;
+            impl_->hw_pix_fmt = AV_PIX_FMT_VIDEOTOOLBOX;
+        }
 #else
-    if (av_hwdevice_ctx_create(&impl_->hw_device_ctx, AV_HWDEVICE_TYPE_VAAPI, nullptr, nullptr, 0) >= 0) {
-        impl_->use_hardware = true;
-        impl_->hw_pix_fmt = AV_PIX_FMT_VAAPI;
-    }
+        if (av_hwdevice_ctx_create(&impl_->hw_device_ctx, AV_HWDEVICE_TYPE_VAAPI, nullptr, nullptr, 0) >= 0) {
+            impl_->use_hardware = true;
+            impl_->hw_pix_fmt = AV_PIX_FMT_VAAPI;
+        }
 #endif
+    }
 
-    impl_->codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    impl_->codec = avcodec_find_decoder(codec_id);
     if (!impl_->codec) {
-        blog(LOG_ERROR, "[Ojowacam] FFmpeg: H264 decoder not found");
+        blog(LOG_ERROR, "[Ojowacam] FFmpeg: %s decoder not found", impl_->codec_name.c_str());
         return false;
     }
 
@@ -366,7 +388,8 @@ bool FFmpegH264Decoder::initialize(int width, int height, const std::string& cod
     impl_->height = height;
     impl_->initialized = true;
 
-    blog(LOG_INFO, "[Ojowacam] FFmpeg H264 decoder initialized (%s, %dx%d)",
+    blog(LOG_INFO, "[Ojowacam] FFmpeg %s decoder initialized (%s, %dx%d)",
+         impl_->codec_name.c_str(),
          impl_->use_hardware ? "hardware" : "software", width, height);
     return true;
 }
@@ -447,6 +470,36 @@ bool FFmpegH264Decoder::decode(const std::vector<uint8_t>& encoded_data,
                             output_frame->data[2] + row * static_cast<size_t>(output_frame->linesize[2]),
                             cw);
             }
+        } else if (output_frame->format == AV_PIX_FMT_NV12 &&
+                   output_frame->data[0] && output_frame->data[1]) {
+            // Hardware transfers (D3D11VA/DXVA2) yield NV12: copy the Y plane,
+            // then deinterleave the interleaved UV plane into I420 U/V planes.
+            const int w = output_frame->width;
+            const int h = output_frame->height;
+            const size_t y_size = static_cast<size_t>(w) * static_cast<size_t>(h);
+            const size_t cw = static_cast<size_t>((w + 1) / 2);
+            const size_t ch = static_cast<size_t>((h + 1) / 2);
+            const size_t uv_size = cw * ch;
+            out_frame.data.resize(y_size + 2 * uv_size);
+
+            for (int row = 0; row < h; ++row) {
+                std::memcpy(out_frame.data.data() + static_cast<size_t>(row) * w,
+                            output_frame->data[0] + static_cast<size_t>(row) * output_frame->linesize[0],
+                            static_cast<size_t>(w));
+            }
+            const uint8_t* uv_src = output_frame->data[1];
+            const int uv_linesize = output_frame->linesize[1];
+            uint8_t* u_dst = out_frame.data.data() + y_size;
+            uint8_t* v_dst = u_dst + uv_size;
+            for (size_t row = 0; row < ch; ++row) {
+                const uint8_t* uv_row = uv_src + row * static_cast<size_t>(uv_linesize);
+                uint8_t* u_row = u_dst + row * cw;
+                uint8_t* v_row = v_dst + row * cw;
+                for (size_t col = 0; col < cw; ++col) {
+                    u_row[col] = uv_row[col * 2];
+                    v_row[col] = uv_row[col * 2 + 1];
+                }
+            }
         } else {
             static std::atomic<bool> warned_format{false};
             if (!warned_format.exchange(true)) {
@@ -486,7 +539,13 @@ bool FFmpegH264Decoder::isInitialized() const {
 std::unique_ptr<HardwareVideoDecoder> HardwareVideoDecoder::Create(
     const std::string& codec) {
 
-    if (codec != "H264" && codec != "h264" && codec != "HEVC" && codec != "hevc") {
+    std::string upper;
+    upper.reserve(codec.size());
+    for (char c : codec) {
+        upper += (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+    }
+    if (upper != "H264" && upper != "HEVC" && upper != "H265" &&
+        upper != "VP8" && upper != "VP9") {
         return nullptr;
     }
 

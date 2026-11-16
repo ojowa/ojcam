@@ -1,5 +1,6 @@
 #include "stream-receiver.h"
 #include <transport/webrtc-transport.h>
+#include <device-manager.h>
 #include <obs-module.h>
 #include <atomic>
 #include <chrono>
@@ -21,7 +22,12 @@ struct StreamReceiver::Impl {
 
     std::string device_id;
     std::string signaling_url;
+    bool auto_discover = false;
     std::atomic<bool> connected{false};
+    // True while a signaling dial is in flight (initial dial, reconnect
+    // worker or beacon-driven retry): prevents overlapping dials that would
+    // replace each other's signaling client.
+    std::atomic<bool> dialing{false};
 
     // Auto-reconnect state (single-flight worker)
     std::mutex reconnect_mutex_;
@@ -34,6 +40,11 @@ struct StreamReceiver::Impl {
 
     // Frame converter format (set from SPS or default)
     VideoPixelFormat video_format_ = VideoPixelFormat::Unknown;
+
+    // Video decoder swap on codec negotiation (guarded by decoder_mutex);
+    // the decode path runs on transport threads concurrently with the swap.
+    std::mutex decoder_mutex;
+    std::string negotiated_codec;
 
     // Last video size pushed to OBS (for onVideoSizeChanged)
     int last_width_ = 0;
@@ -67,7 +78,32 @@ StreamReceiver::StreamReceiver(obs_source_t* video_source, obs_source_t* audio_s
 
     // Transport → decoder pipeline
     impl_->transport->onVideoFrame = [this](const VideoFrame& frame) {
-        impl_->video_decoder->decode(frame.data, frame.timestamp_us);
+        std::lock_guard<std::mutex> lock(impl_->decoder_mutex);
+        if (impl_->video_decoder) {
+            impl_->video_decoder->decode(frame.data, frame.timestamp_us);
+        }
+    };
+
+    // The remote offer decides the codec (e.g. VP8 from the phone's software
+    // encoder factory): switch in a matching decoder before frames arrive.
+    impl_->transport->onVideoCodecNegotiated = [this](const std::string& codec) {
+        std::lock_guard<std::mutex> lock(impl_->decoder_mutex);
+        if (impl_->negotiated_codec == codec) return;
+
+        auto decoder = HardwareVideoDecoder::Create(codec);
+        if (!decoder || !decoder->initialize(1920, 1080, codec)) {
+            blog(LOG_ERROR,
+                 "[Ojowacam] No working video decoder for negotiated codec %s; video frames stay dropped",
+                 codec.c_str());
+            return;
+        }
+        decoder->onFrameDecoded = [this](const VideoFrame& frame) {
+            pushVideoFrameToOBS(frame);
+        };
+        if (impl_->video_decoder) impl_->video_decoder->release();
+        impl_->video_decoder = std::move(decoder);
+        impl_->negotiated_codec = codec;
+        blog(LOG_INFO, "[Ojowacam] Video decoder switched to %s", codec.c_str());
     };
 
     // Transport delivers decoded PCM audio in AudioFrame::samples
@@ -168,10 +204,18 @@ void StreamReceiver::reconnectWorker(std::string device_id, std::string signalin
         // loop when the worker called it). Failure paths only schedule when
         // no worker is running — here reconnect_running_ is true, so those
         // scheduleReconnect() calls are no-ops and we advance below.
-        const bool ok = connect(device_id, signaling_url);
+        const bool ok = connect(device_id, signaling_url, impl_->auto_discover);
 
         if (ok && impl_->connected.load(std::memory_order_acquire)) {
             // connect() already restored the attempt budget on success.
+            finishReconnectWorker();
+            return;
+        }
+
+        // In auto-discover mode connect() only opens the listener: the
+        // beacon-driven callback performs the real dial when the phone
+        // appears, so there is nothing for this worker to retry here.
+        if (impl_->auto_discover && ok) {
             finishReconnectWorker();
             return;
         }
@@ -209,7 +253,8 @@ void StreamReceiver::cancelReconnectAndWait() {
 }
 
 bool StreamReceiver::connect(const std::string& device_id,
-                              const std::string& signaling_url) {
+                              const std::string& signaling_url,
+                              bool auto_discover) {
     {
         // Re-enable auto-reconnect only for external/manual connects.
         // The reconnect worker must not clear stop_reconnect_ — disconnect()
@@ -223,6 +268,35 @@ bool StreamReceiver::connect(const std::string& device_id,
     }
     impl_->device_id = device_id;
     impl_->signaling_url = signaling_url;
+    impl_->auto_discover = auto_discover;
+    impl_->transport->setConnectionOptions(auto_discover);
+    blog(LOG_INFO, "[Ojowacam] Receiver connecting: url=%s auto_discover=%d",
+         signaling_url.c_str(), auto_discover ? 1 : 0);
+
+    // Register the discovery callback once: when a beacon arrives, dial the
+    // phone (auto-discover mode). The single shared session keys on "auto".
+    if (auto_discover) {
+        auto* dm = DeviceManager::GetInstance();
+        dm->SetDeviceCallback([this](const DiscoveredDevice& dev) {
+            if (!impl_ || !impl_->transport) return;
+            if (impl_->transport->isConnected()) return;
+            const std::string target =
+                "ws://" + dev.ip_address + ":" + std::to_string(dev.port);
+            blog(LOG_INFO, "[Ojowacam] Same-network discovery: dialing %s", target.c_str());
+            connect(dev.device_id, target, true);
+        });
+        dm->StartDiscovery(); // idempotent (module load also starts it)
+    }
+
+    // One dial at a time: a second caller (beacon retry while the first dial
+    // is still running) must not replace the live signaling client.
+    if (impl_->dialing.exchange(true)) {
+        return impl_->transport->isConnected();
+    }
+    struct DialGuard {
+        std::atomic<bool>& flag;
+        ~DialGuard() { flag.store(false, std::memory_order_release); }
+    } dial_guard{impl_->dialing};
 
     // Initialize decoders based on expected stream config
     if (!impl_->video_decoder->isInitialized()) {
@@ -232,8 +306,14 @@ bool StreamReceiver::connect(const std::string& device_id,
         impl_->audio_decoder->initialize(48000, 2, "OPUS");
     }
 
-    if (!impl_->transport->connect(signaling_url)) {
-        blog(LOG_ERROR, "[Ojowacam] WebRTC transport connect failed for device %s",
+    // In auto-discover mode with no stored URL: just open the listener, wait
+    // for beacons to drive the real dial (via the discovery callback above).
+    // When a beacon supplies an address (signaling_url non-empty), dial it.
+    const std::string dial_url =
+        (auto_discover && signaling_url.empty()) ? std::string() : signaling_url;
+    if (!impl_->transport->connect(dial_url)) {
+        blog(LOG_ERROR,
+             "[Ojowacam] WebRTC transport connect failed for device %s",
              device_id.c_str());
         scheduleReconnect();
         return false;
@@ -245,7 +325,13 @@ bool StreamReceiver::connect(const std::string& device_id,
     // kMaxReconnectAttempts unreachable (worker calls connect() each retry).
     impl_->reconnect_attempts_.store(0, std::memory_order_relaxed);
 
-    blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
+    if (impl_->transport->isConnected()) {
+        blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
+    } else {
+        blog(LOG_INFO,
+             "[Ojowacam] Engaged for device %s — waiting for the phone (auto-discovery)",
+             device_id.c_str());
+    }
     return true;
 }
 
@@ -311,6 +397,10 @@ void StreamReceiver::disconnect() {
     // Intentional teardown: cancel auto-reconnect before dropping the
     // transport (its disconnect callback would otherwise schedule a retry).
     cancelReconnectAndWait();
+
+    // Drop the discovery callback so a late beacon cannot dial through a
+    // receiver that is tearing down.
+    DeviceManager::GetInstance()->SetDeviceCallback(nullptr);
 
     impl_->transport->disconnect();
     impl_->connected.store(false, std::memory_order_release);
