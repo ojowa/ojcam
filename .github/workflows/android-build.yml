@@ -53,6 +53,10 @@ jobs:
             echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/apps/mobile/android/ojowacam-upload-keystore.jks" >> $GITHUB_ENV
           fi
       - name: Android native modules present
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           echo "Android native modules exist at apps/mobile/android/"
           ls apps/mobile/android/src/main/java/com/ojowacam/mobile/
