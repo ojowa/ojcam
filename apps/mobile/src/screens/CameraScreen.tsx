@@ -486,9 +486,6 @@ export default function CameraScreen() {
             <Text style={styles.controlText}>Flip</Text>
           </TouchableOpacity>
 
-          {/* Shutter / photo capture button (prominent, centered) */}
-          {/* Removed: local photo capture is not part of the streaming flow */}
-
           <TouchableOpacity
             style={[styles.streamButton, isStreaming ? styles.stopButton : styles.goLiveButton]}
             onPress={() => void toggleStreaming()}
