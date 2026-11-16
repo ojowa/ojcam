@@ -18,8 +18,8 @@ obs_source_info ojowacam_video_source_info = [] {
     obs_source_info info{};
     info.id = "ojowacam_video_source";
     info.type = OBS_SOURCE_TYPE_INPUT;
-    info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_ASYNC_VIDEO;
-    info.get_name = [](void *) -> const char * { return "Ojowacam Video"; };
+    info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_ASYNC_VIDEO;
+    info.get_name = [](void *) -> const char * { return "Ojowacam Camera"; };
     info.create = ojowacam_video_create;
     info.destroy = ojowacam_video_destroy;
     info.get_width = ojowacam_video_width;
@@ -108,7 +108,7 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
     d->connected = false;
 
     if (!resolved_signaling_url.empty()) {
-        d->stream_receiver = new ojowacam::StreamReceiver(d->source, nullptr);
+        d->stream_receiver = new ojowacam::StreamReceiver(d->source, d->source);
         d->stream_receiver->onVideoSizeChanged = [d](uint32_t w, uint32_t h) {
             d->width = w;
             d->height = h;

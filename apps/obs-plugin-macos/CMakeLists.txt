@@ -76,7 +76,6 @@ add_subdirectory(streaming-core)
 set(MACOS_SOURCES
     src/plugin.mm
     src/camera-source.mm
-    src/audio-source.mm
     src/device-manager.mm
     src/stream-receiver.mm
     shared/src/device-manager.cpp

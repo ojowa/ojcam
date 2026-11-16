@@ -21,7 +21,7 @@
 obs_source_info ojowacam_camera_source_info = {
     .id = "ojowacam_camera_source",
     .type = OBS_SOURCE_TYPE_INPUT,
-    .flags = OBS_SOURCE_ASYNC_VIDEO,
+    .flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_ASYNC_VIDEO,
     .get_name = ^(void *data) {
         return "Ojowacam Camera";
     },
@@ -104,7 +104,7 @@ void ojowacam_camera_update(void *data, obs_data_t *settings)
     }
 
     if (!resolvedSignalingUrl.empty()) {
-        d->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:d->source audioSource:nil];
+        d->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:d->source audioSource:d->source];
         [d->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
         d->connected = d->streamReceiver.isConnected;
     } else {
@@ -160,7 +160,7 @@ bool ojowacam_camera_get_default_size(obs_data_t *settings, uint32_t *cx, uint32
     return true;
 }
     if (!resolvedSignalingUrl.empty()) {
-        data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:source audioSource:nil];
+        data->streamReceiver = [[OjowacamStreamReceiver alloc] initWithVideoSource:source audioSource:source];
         [data->streamReceiver connectWithDeviceId:@(resolvedDeviceId.c_str()) signalingURL:@(resolvedSignalingUrl.c_str())];
         data->connected = data->streamReceiver.isConnected;
     }
