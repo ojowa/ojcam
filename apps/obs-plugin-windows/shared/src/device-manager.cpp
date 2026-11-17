@@ -734,4 +734,21 @@ void DeviceManager::StopDiscovery() {
     }
 }
 
+void DeviceManager::sendUnicastBeacon(const std::string &ip) {
+    if (!udp_ref_) return;
+    auto* udp = static_cast<UdpBeaconContext*>(udp_ref_);
+    if (udp->sock == OJO_INVALID_UDP_SOCKET) return;
+
+    const std::string beacon =
+        std::string(ojowacam::kBeaconMagic) + "|role=obs|ws=" + std::to_string(ojowacam::kPluginWsPort);
+
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(ojowacam::kDiscoveryUdpPort);
+    if (inet_pton(AF_INET, ip.c_str(), &dst.sin_addr) <= 0) return;
+
+    sendto(udp->sock, beacon.c_str(), static_cast<int>(beacon.size()), 0,
+           reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+}
+
 } // namespace ojowacam

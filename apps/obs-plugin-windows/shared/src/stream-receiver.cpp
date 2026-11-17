@@ -323,6 +323,24 @@ bool StreamReceiver::connect(const std::string& device_id,
         return false;
     }
 
+    // Send a unicast obs beacon to the phone's IP so a phone on a different
+    // subnet can learn the plugin's WebSocket server address and dial in.
+    // UDP broadcast (255.255.255.255) does not cross subnets, so a manual
+    // URL needs this unicast fallback for cross-subnet discovery.
+    if (auto_discover && !signaling_url.empty()) {
+        std::string host = signaling_url;
+        size_t scheme = host.find("://");
+        if (scheme != std::string::npos) host = host.substr(scheme + 3);
+        size_t slash = host.find('/');
+        if (slash != std::string::npos) host = host.substr(0, slash);
+        size_t colon = host.find(':');
+        if (colon != std::string::npos) host = host.substr(0, colon);
+        if (!host.empty()) {
+            DeviceManager::GetInstance()->sendUnicastBeacon(host);
+            blog(LOG_INFO, "[Ojowacam] Unicast beacon sent to %s", host.c_str());
+        }
+    }
+
     // The phone is the offerer; OBS answers when its OFFER arrives.
     // Do NOT set impl_->connected here: transport->connect() may return true
     // for auto-discover with no URL (just listening, no peer yet). Let the

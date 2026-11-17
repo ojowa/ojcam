@@ -859,6 +859,44 @@ void WebRTCTransport::sendPong() {
     if (impl_->signaling) impl_->signaling->sendMessage("{\"type\":\"PONG\"}");
 }
 
+void WebRTCTransport::tearDownMediaSession() {
+    // Close the WebRTC peer connection so no media (video/audio RTP) can
+    // flow from a session whose signaling token is no longer valid.
+    // The signaling socket is intentionally left open — only the media
+    // session is torn down.
+#ifdef OJO_WEBRTC_ENABLED
+#if defined(__APPLE__)
+    if (impl_->peer_connection) {
+        [impl_->peer_connection close];
+        impl_->peer_connection = nullptr;
+    }
+#elif defined(_WIN32)
+    if (impl_->peer_connection) {
+        impl_->peer_connection->Close();
+        impl_->peer_connection = nullptr;
+    }
+#endif
+#endif
+#ifdef OJO_LIBDATACHANNEL
+    {
+        std::lock_guard<std::mutex> lock(impl_->pc_mutex);
+        if (impl_->peer_connection) {
+            impl_->peer_connection->close();
+            impl_->peer_connection = nullptr;
+        }
+    }
+#endif
+    {
+        std::lock_guard<std::mutex> lock(impl_->session_mutex);
+        impl_->session_token.clear();
+        impl_->pending_session_id.clear();
+    }
+    impl_->connected = false;
+    connected_ = false;
+    if (onConnectionStateChanged) onConnectionStateChanged(false);
+    blog(LOG_INFO, "[Ojowacam] Media session torn down (invalid signaling session)");
+}
+
 void WebRTCTransport::sendAnswer() {
     std::string sdp;
     {
@@ -1410,6 +1448,7 @@ void WebRTCTransport::handleSignalingMessage(const std::string& message) {
     }
     if (msgType == "OFFER") {
         if (!sessionAuthorized(message)) {
+            tearDownMediaSession();
             sendSignalingError("Session required: pair with the phone first");
             return;
         }
@@ -1422,6 +1461,7 @@ void WebRTCTransport::handleSignalingMessage(const std::string& message) {
     }
     if (msgType == "ANSWER") {
         if (!sessionAuthorized(message)) {
+            tearDownMediaSession();
             sendSignalingError("Session required: pair with the phone first");
             return;
         }
@@ -1430,6 +1470,7 @@ void WebRTCTransport::handleSignalingMessage(const std::string& message) {
     }
     if (msgType == "ICE_CANDIDATE") {
         if (!sessionAuthorized(message)) {
+            tearDownMediaSession();
             sendSignalingError("Session required: pair with the phone first");
             return;
         }

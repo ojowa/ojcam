@@ -51,6 +51,10 @@ public:
     void StartDiscovery();
     void StopDiscovery();
 
+    // Send a unicast obs beacon to a specific IP so a phone on a different
+    // subnet can learn the plugin's WebSocket server address and dial in.
+    void sendUnicastBeacon(const std::string &ip);
+
 private:
     DeviceManager() = default;
     ~DeviceManager() = default;

@@ -50,6 +50,10 @@ private:
     void sendAnswer();
     void sendStartSessionAck(const std::string& session_id);
     void sendPong();
+    // Tears down the WebRTC media session (peer connection + session token)
+    // without closing the signaling socket. Used when signaling authorization
+    // fails so stale media from a previous session cannot flow.
+    void tearDownMediaSession();
     // Dispatches one incoming RTP packet: video payloads go through the
     // per-track depacketizer, everything else is decoded as Opus audio.
     // Only defined for the libdatachannel backend (OJO_LIBDATACHANNEL).
