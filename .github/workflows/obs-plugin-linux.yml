@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  OBS_VERSION: '30.1.2'
+  OBS_VERSION: '33.0.1'
 
 jobs:
   obs-plugin-linux:
@@ -23,7 +23,17 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential ninja-build qt6-base ffmpeg libuv1-dev python3 libavahi-client-dev
+          # Note: "qt6-base" is not an Ubuntu package name (and the UI is
+          # disabled anyway). libobs in OBS 33 hard-requires FFmpeg >= 8.0,
+          # SIMDe, uthash, jansson and zlib; libobs-opengl's configure step
+          # (which always runs) requires libdrm/X11/XCB; PulseAudio keeps
+          # the default ENABLE_PULSEAUDIO=ON satisfied; avahi/opus are for
+          # the plugin's own device discovery and audio decode.
+          sudo apt-get install -y cmake build-essential pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+            libjansson-dev libuthash-dev libsimde-dev zlib1g-dev \
+            libdrm-dev libx11-dev libxcb1-dev libx11-xcb-dev libpulse-dev \
+            libavahi-client-dev libopus-dev
 
       - name: Clone OBS Studio SDK
         run: |
@@ -33,34 +43,50 @@ jobs:
         run: |
           cmake -S obs-studio -B obs-studio/build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DENABLE_UI=OFF \
-            -DENABLE_PLUGINS=OFF \
+            -DENABLE_FRONTEND=OFF \
             -DENABLE_SCRIPTING=OFF \
-            -DENABLE_STREAMFX=OFF \
-            -DENABLE_SPEECH_TO_TEXT=OFF \
-            -DENABLE_VST=OFF \
-            -DENABLE_WEBRTC=OFF
+            -DENABLE_CORE_MODULES=OFF \
+            -DENABLE_WAYLAND=OFF
           if [ $? -ne 0 ]; then exit 1; fi
           echo "OBS configure complete"
 
-      - name: Build OBS runtime libraries (Linux)
+      - name: Build libobs (Linux)
         run: |
-          cmake --build obs-studio/build --config Release --target libobs-opengl -j $(nproc)
+          # The plugin only compiles and links against libobs; renderers,
+          # frontend and core modules are deliberately not built.
+          cmake --build obs-studio/build --target libobs -j $(nproc)
           if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS runtime libraries build complete"
+          echo "libobs build complete"
 
-      - name: Install OBS to local prefix (Linux)
+      - name: Stage OBS SDK for plugin
         run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX"
-          if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS installed to $OBS_INSTALL_PREFIX"
+          # Stage what the plugin's manual detection fallback expects:
+          #   <prefix>/include/obs/*.h  and  <prefix>/lib/libobs.so*
+          # (cmake --install is skipped: OBS attaches headers/libraries to
+          # EXCLUDE_FROM_ALL components, and driving those would mean
+          # building the whole OBS project instead of just libobs.)
+          OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          mkdir -p "$OBS_INSTALL_PREFIX/include/obs" "$OBS_INSTALL_PREFIX/lib"
+          if [ ! -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h" ]; then
+            cp -R obs-studio/libobs/. "$OBS_INSTALL_PREFIX/include/obs/"
+          fi
+          test -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h"
+          mapfile -t LIBS < <(find obs-studio/build -name "libobs.so*" \( -type f -o -type l \))
+          if [ "${#LIBS[@]}" -eq 0 ]; then
+            echo "libobs.so not found in the OBS build tree"
+            find obs-studio/build -maxdepth 3 -name "*.so*" | head -50
+            exit 1
+          fi
+          cp -a "${LIBS[@]}" "$OBS_INSTALL_PREFIX/lib/"
+          test -e "$OBS_INSTALL_PREFIX/lib/libobs.so"
+          echo "=== staged OBS SDK ==="
+          find "$OBS_INSTALL_PREFIX/lib" -name "libobs*"
 
       - name: Configure Ojowacam OBS Plugin (Linux)
         run: |
           cmake -S apps/obs-plugin-linux -B apps/obs-plugin-linux/build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX"
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/obs-install"
           if [ $? -ne 0 ]; then exit 1; fi
           echo "Ojowacam plugin configure complete"
 
@@ -74,5 +100,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-obs-linux
+          if-no-files-found: error
           path: |
             apps/obs-plugin-linux/build/data/obs-plugins/ojowacam-obs/**/*.so*

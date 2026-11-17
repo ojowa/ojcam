@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  OBS_VERSION: '30.1.2'
+  OBS_VERSION: '33.0.1'
 
 jobs:
   obs-plugin-macos:
@@ -23,7 +23,10 @@ jobs:
       - name: Install system dependencies
         run: |
           brew update
-          brew install cmake ninja qt@6 ffmpeg curl libuv python3
+          # libobs (OBS 33) hard-requires FFmpeg >= 8.0, jansson, SIMDe and
+          # uthash. pkg-config lets OBS's finders resolve them under the
+          # Homebrew prefix, which is not a default CMake search path.
+          brew install cmake ffmpeg jansson simde uthash pkg-config
 
       - name: Clone OBS Studio SDK
         run: |
@@ -31,93 +34,53 @@ jobs:
 
       - name: Configure OBS Studio (macOS)
         run: |
-          # OBS 30.x refuses any non-Xcode generator on macOS
-          # (cmake/macos/compilerconfig.cmake: "Building OBS Studio on macOS
-          # requires Xcode generator"). Xcode is multi-config, so build type
-          # is selected at build time via --config Release.
+          # OBS 33 hard-requires the Xcode generator on macOS (and
+          # Xcode >= 26.5, which macos-latest ships). Expose the Homebrew
+          # prefix so libobs finds FFmpeg, jansson, SIMDe and uthash.
+          export CMAKE_PREFIX_PATH="$(brew --prefix)"
           cmake -S obs-studio -B obs-studio/build -G Xcode \
-            -DENABLE_UI=OFF \
-            -DENABLE_PLUGINS=OFF \
+            -DENABLE_FRONTEND=OFF \
             -DENABLE_SCRIPTING=OFF \
-            -DENABLE_STREAMFX=OFF \
-            -DENABLE_SPEECH_TO_TEXT=OFF \
-            -DENABLE_VST=OFF \
-            -DENABLE_WEBRTC=OFF
+            -DENABLE_CORE_MODULES=OFF
           if [ $? -ne 0 ]; then exit 1; fi
           echo "OBS configure complete"
 
-      - name: Build OBS runtime libraries (macOS)
+      - name: Build libobs (macOS)
         run: |
-          # Full build, mirroring the Windows workflow: every target with an
-          # install rule must exist before cmake --install runs.
-          cmake --build obs-studio/build --config Release -j $(sysctl -n hw.ncpu)
+          # The plugin only compiles and links against libobs; renderers,
+          # frontend and core modules are deliberately not built.
+          cmake --build obs-studio/build --config Release --target libobs -j $(sysctl -n hw.ncpu)
           if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS runtime libraries build complete"
+          echo "libobs build complete"
 
-      - name: Install OBS to local prefix (macOS)
+      - name: Stage OBS SDK for plugin
         run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX" --config Release
-          # On macOS libobs installs as a framework, and both the framework
-          # and its headers are attached to the obs_libraries component with
-          # EXCLUDE_FROM_ALL — a plain install skips them and the prefix
-          # would end up with no libobs at all. Request the component
-          # explicitly (CMake: EXCLUDE_FROM_ALL rules are "only installed as
-          # part of a component-specific installation").
-          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX" --config Release --component obs_libraries
-          if [ $? -ne 0 ]; then exit 1; fi
-          echo "OBS installed to $OBS_INSTALL_PREFIX"
-
-      - name: Validate OBS installation (macOS)
-        run: |
-          export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          echo "=== OBS Install Tree ==="
-          find "$OBS_INSTALL_PREFIX" -type f | head -50
-          echo "=== Checking for OBS CMake config ==="
-          found=0
-          for p in "$OBS_INSTALL_PREFIX/lib/cmake/OBS/OBSConfig.cmake" \
-                   "$OBS_INSTALL_PREFIX/lib64/cmake/OBS/OBSConfig.cmake" \
-                   "$OBS_INSTALL_PREFIX/share/cmake/OBS/OBSConfig.cmake"; do
-            if [ -f "$p" ]; then
-              echo "FOUND: $p"
-              found=1
-            fi
-          done
-          if [ "$found" -eq 0 ]; then
-            echo "WARNING: No OBS CMake config package found. Plugin will use manual detection fallback."
-          fi
-          echo "=== OBS Headers ==="
-          find "$OBS_INSTALL_PREFIX/include" -name "*.h" | head -20
-          echo "=== OBS Libraries ==="
-          find "$OBS_INSTALL_PREFIX/lib" -name "*.dylib" -o -name "*.a" 2>/dev/null | head -10 || find "$OBS_INSTALL_PREFIX/lib" -name "*.so.*" 2>/dev/null | head -10
-
-      - name: Stage OBS headers for plugin
-        run: |
-          # OBS's header install (component obs_libraries) puts the public
-          # headers inside the framework bundle; the plugin's manual
-          # detection fallback expects <prefix>/include/obs/*.h — same
-          # staging the Windows workflow does.
+          # Stage what the plugin's manual detection fallback expects:
+          #   <prefix>/include/obs/*.h  and  <prefix>/Frameworks/libobs.framework
+          # cmake --install is skipped on purpose: on macOS the framework and
+          # its headers install under component obs_libraries marked
+          # EXCLUDE_FROM_ALL, and driving that would mean building the whole
+          # OBS project instead of just libobs.
           OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
           mkdir -p "$OBS_INSTALL_PREFIX/include/obs"
           if [ ! -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h" ]; then
             cp -R obs-studio/libobs/. "$OBS_INSTALL_PREFIX/include/obs/"
           fi
           test -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h"
-          # Belt and braces: if the framework did not land in the prefix,
-          # stage it straight from the build tree so find_library sees it.
-          if [ ! -d "$OBS_INSTALL_PREFIX/Frameworks/libobs.framework" ]; then
-            FW=$(find obs-studio/build -type d -name "libobs.framework" | head -1)
-            if [ -n "$FW" ]; then
-              mkdir -p "$OBS_INSTALL_PREFIX/Frameworks"
-              cp -R "$FW" "$OBS_INSTALL_PREFIX/Frameworks/"
-            fi
+          mkdir -p "$OBS_INSTALL_PREFIX/Frameworks"
+          FW=$(find obs-studio/build -type d -name "libobs.framework" | head -1)
+          if [ -z "$FW" ]; then
+            echo "libobs.framework not found in the OBS build tree"
+            find obs-studio/build -maxdepth 3 -type d | head -50
+            exit 1
           fi
-          echo "=== OBS libobs artifacts in prefix ==="
+          rm -rf "$OBS_INSTALL_PREFIX/Frameworks/libobs.framework"
+          cp -R "$FW" "$OBS_INSTALL_PREFIX/Frameworks/"
+          echo "=== staged OBS SDK ==="
           find "$OBS_INSTALL_PREFIX" \( -name "libobs*" -o -name "obs-module.h" \) | head -20
 
       - name: Configure Ojowacam OBS Plugin (macOS)
         run: |
-          export CMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/obs-install"
           cmake -S apps/obs-plugin-macos -B apps/obs-plugin-macos/build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/obs-install"
@@ -142,14 +105,14 @@ jobs:
           if [ -n "$BUNDLE_PATH" ]; then
             codesign --deep --force --sign "$APPLE_DEVELOPER_ID" "$BUNDLE_PATH"
             echo "macOS OBS plugin signed"
-            
+
             xcrun notarytool submit "$BUNDLE_PATH" \
               --apple-id "$APPLE_NOTARY_APPLE_ID" \
               --team-id "$APPLE_TEAM_ID" \
               --password "$APPLE_NOTARY_PASSWORD" \
               --wait
             echo "macOS OBS plugin notarized"
-            
+
             xcrun stapler staple "$BUNDLE_PATH"
             echo "macOS OBS plugin stapled"
           else
