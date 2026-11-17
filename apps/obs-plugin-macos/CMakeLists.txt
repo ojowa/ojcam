@@ -73,6 +73,19 @@ include_directories(
     ${OBS_INCLUDE_DIRS}
 )
 
+# Homebrew prefixes are outside clang's default search paths on Apple
+# Silicon. OBS 33's util/sse-intrin.h includes <simde/x86/sse2.h> from
+# brew's simde keg; jansson/uthash/FFmpeg headers from brew land here
+# too. (The OBS configure step sees brew via CMAKE_PREFIX_PATH; the
+# plugin's manual detection does not.)
+if(APPLE)
+    foreach(_brew_include "/opt/homebrew/include" "/usr/local/include")
+        if(IS_DIRECTORY "${_brew_include}")
+            include_directories("${_brew_include}")
+        endif()
+    endforeach()
+endif()
+
 # Add streaming-core library
 add_subdirectory(streaming-core)
 
