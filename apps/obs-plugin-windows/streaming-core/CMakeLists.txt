@@ -17,15 +17,13 @@ set(SOURCES
 
 add_library(streaming-core STATIC ${SOURCES})
 
-# FFmpeg for hardware-accelerated H264 decoding
-find_package(FFmpeg QUIET)
-if(FFmpeg_FOUND)
-    target_link_libraries(streaming-core PRIVATE FFmpeg::avcodec FFmpeg::avutil)
-    target_compile_definitions(streaming-core PRIVATE OJO_FFMPEG_ENABLED)
-    message(STATUS "[Ojowacam] FFmpeg found - H264 hardware decode enabled")
-else()
-    message(STATUS "[Ojowacam] FFmpeg not found - using software H264 decoder only")
-endif()
+# FFmpeg for hardware-accelerated H264 decoding — required for video decode.
+# Without it there is no working video decoder and the plugin produces black
+# video, so fail the build loudly instead of silently shipping a stub.
+find_package(FFmpeg REQUIRED)
+target_link_libraries(streaming-core PRIVATE FFmpeg::avcodec FFmpeg::avutil)
+target_compile_definitions(streaming-core PRIVATE OJO_FFMPEG_ENABLED)
+message(STATUS "[Ojowacam] FFmpeg found - H264 hardware decode enabled")
 
 include(FetchContent)
 

@@ -66,11 +66,15 @@ StreamReceiver::StreamReceiver(obs_source_t* video_source, obs_source_t* audio_s
     impl_->audio_source = audio_source;
 
     impl_->transport = std::make_unique<WebRTCTransport>();
-    // Prefer the FFmpeg-backed decoder (OJO_FFMPEG_ENABLED); fall back to the
-    // NAL-parsing stub, which cannot produce pixels and drops frames.
+    // Prefer the FFmpeg-backed decoder (OJO_FFMPEG_ENABLED). Without FFmpeg
+    // there is no working video decoder — leave video_decoder null and log
+    // a clear error rather than silently falling back to the H264 NAL
+    // parser stub, which drops every frame and produces black video.
     impl_->video_decoder = HardwareVideoDecoder::Create("H264");
     if (!impl_->video_decoder) {
-        impl_->video_decoder = std::make_unique<H264VideoDecoder>();
+        blog(LOG_ERROR,
+             "[Ojowacam] No FFmpeg-backed H264 decoder available; video "
+             "frames will be dropped. FFmpeg is required for video decode.");
     }
     impl_->audio_decoder = std::make_unique<OpusAudioDecoder>();
     impl_->synchronizer = std::make_unique<StreamSynchronizer>();
