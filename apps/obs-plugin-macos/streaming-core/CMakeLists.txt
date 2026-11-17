@@ -85,6 +85,12 @@ set(WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 
+# mbedtls defaults MBEDTLS_FATAL_WARNINGS=ON (-Werror). Xcode 26's Clang
+# enables -Wunterminated-string-initialization under -Wextra and mbedtls's
+# TLS 1.3 label tables are intentionally non-NUL-terminated, so the
+# vendored mbedtls dies under -Werror. Opt out with the other dep knobs.
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+
 # libdatachannel's DtlsSrtpTransport needs the DTLS-SRTP extension, which
 # MbedTLS 3.6 leaves off by default; MBEDTLS_USER_CONFIG_FILE injects
 # MBEDTLS_SSL_DTLS_SRTP into every mbedtls TU (cache var is passed as a
