@@ -153,10 +153,17 @@ export class StreamingService {
       WebRTCService.onIceCandidate((candidate) => { void signalingService.sendIceCandidate(candidate); });
       WebRTCService.onConnectionStateChange((state) => {
         if (state === 'FAILED') {
-          // Terminal WebRTC failure: release camera/mic/peer connection so
-          // the next OBS connection starts a clean session instead of
-          // auto-start skipping past half-alive resources.
-          void this.stopStreaming();
+          // Terminal WebRTC failure: reset the peer connection so the next
+          // OBS connection can re-offer with a fresh ICE generation. Keep
+          // camera, mic, and encoder running to avoid full re-initialization
+          // on transient network blips. streamResourcesStarted is reset so
+          // autoStartStreaming can re-run on the next onConnected.
+          void WebRTCService.closeConnection();
+          this.isStreaming = false;
+          this.streamResourcesStarted = false;
+          this.state.isStreaming = false;
+          this.state.error = null;
+          this.notifyStateChange();
         }
         // DISCONNECTED is intentionally left alone: ICE commonly recovers to
         // CONNECTED on its own, and tearing down would kill a live session.
@@ -344,12 +351,6 @@ export class StreamingService {
     if (this.autoStartInFlight || this.isStreaming || this.streamResourcesStarted) return;
     this.autoStartInFlight = true;
     try {
-      // Give the pairing handshake a moment to complete so the session
-      // message carries a valid session token.
-      const deadline = Date.now() + 4000;
-      while (!authService.isAuthenticated() && Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
       let cameraId = this.lastCameraId;
       if (!cameraId) {
         const cameras = await CameraService.getAvailableCameras();
@@ -362,6 +363,9 @@ export class StreamingService {
         bitrate: streamSettings.getBitrate(),
         codec: 'H264',
       };
+      // startStreaming() handles pairing via requestPairing() +
+      // waitForPairing(30s) before sending START_SESSION, so the session
+      // token is valid before the offer is sent. No fragile polling here.
       await this.startStreaming(cameraId, config);
     } catch (error) {
       console.warn('Auto-start of the video session failed:', error);
