@@ -67,6 +67,10 @@ jobs:
             cp -R obs-studio/libobs/. "$OBS_INSTALL_PREFIX/include/obs/"
           fi
           test -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h"
+          # obs-config.h does #include "obsconfig.h", which OBS only
+          # generates into the build tree (configure_file -> config/).
+          test -f obs-studio/build/config/obsconfig.h
+          cp obs-studio/build/config/obsconfig.h "$OBS_INSTALL_PREFIX/include/obs/"
           mkdir -p "$OBS_INSTALL_PREFIX/Frameworks"
           FW=$(find obs-studio/build -type d -name "libobs.framework" | head -1)
           if [ -z "$FW" ]; then
