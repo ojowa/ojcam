@@ -27,14 +27,17 @@ jobs:
           # disabled anyway). libobs in OBS 33 hard-requires FFmpeg >= 8.0,
           # SIMDe, uthash, jansson and zlib; cmake/linux/defaults.cmake
           # requires ECM (Extra CMake Modules); libobs-opengl's configure
-          # step (which always runs) requires libdrm/X11/XCB; PulseAudio
-          # keeps the default ENABLE_PULSEAUDIO=ON satisfied; avahi/opus
-          # are for the plugin's own device discovery and audio decode.
+          # step (which always runs) pulls in deps/glad, whose
+          # find_package(OpenGL REQUIRED) needs glvnd's libgl-dev and
+          # libglx-dev (plus libdrm/X11/XCB); PulseAudio keeps the default
+          # ENABLE_PULSEAUDIO=ON satisfied; avahi/opus are for the plugin's
+          # own device discovery and audio decode.
           sudo apt-get install -y cmake build-essential pkg-config \
             extra-cmake-modules \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
             libjansson-dev uthash-dev libsimde-dev zlib1g-dev \
-            libdrm-dev libx11-dev libxcb1-dev libx11-xcb-dev libpulse-dev \
+            libdrm-dev libx11-dev libxcb1-dev libx11-xcb-dev libgl-dev libglx-dev \
+            libpulse-dev \
             libavahi-client-dev libopus-dev
 
       - name: Clone OBS Studio SDK
@@ -73,13 +76,25 @@ jobs:
             cp -R obs-studio/libobs/. "$OBS_INSTALL_PREFIX/include/obs/"
           fi
           test -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h"
+          # The build tree holds the same libraries in several places (real
+          # outputs plus rundir copies/symlinks), so a flat cp -a of every
+          # match dies on same-name collisions ("will not overwrite
+          # just-created"). Copy each basename once, dereferencing symlinks
+          # (-L) so the staged prefix is self-contained.
           mapfile -t LIBS < <(find obs-studio/build -name "libobs.so*" \( -type f -o -type l \))
           if [ "${#LIBS[@]}" -eq 0 ]; then
             echo "libobs.so not found in the OBS build tree"
             find obs-studio/build -maxdepth 3 -name "*.so*" | head -50
             exit 1
           fi
-          cp -a "${LIBS[@]}" "$OBS_INSTALL_PREFIX/lib/"
+          declare -A SEEN_LIB
+          for lib in "${LIBS[@]}"; do
+            base="$(basename "$lib")"
+            if [ -z "${SEEN_LIB[$base]:-}" ]; then
+              SEEN_LIB[$base]=1
+              cp -L "$lib" "$OBS_INSTALL_PREFIX/lib/"
+            fi
+          done
           test -e "$OBS_INSTALL_PREFIX/lib/libobs.so"
           echo "=== staged OBS SDK ==="
           find "$OBS_INSTALL_PREFIX/lib" -name "libobs*"
