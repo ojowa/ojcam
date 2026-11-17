@@ -76,10 +76,6 @@ include_directories(
 # Add streaming-core library
 add_subdirectory(streaming-core)
 
-# Bake the project version into the bundle for the source properties panel and
-# the load-time log line (see src/camera-source.mm, src/obs-registration.cpp).
-target_compile_definitions(ojowacam-obs-macos PRIVATE "OJOWACAM_VERSION=\"${PROJECT_VERSION}\"")
-
 # macOS-specific source files (Objective-C++ for the source, C++ elsewhere)
 set(MACOS_SOURCES
     src/obs-registration.cpp
@@ -91,6 +87,12 @@ set(MACOS_SOURCES
 )
 
 add_library(ojowacam-obs-macos MODULE ${MACOS_SOURCES})
+
+# Bake the project version into the bundle for the source properties panel and
+# the load-time log line (see src/camera-source.mm, src/obs-registration.cpp).
+# Must come after add_library(): target_compile_definitions() needs an
+# existing target.
+target_compile_definitions(ojowacam-obs-macos PRIVATE "OJOWACAM_VERSION=\"${PROJECT_VERSION}\"")
 
 target_link_libraries(ojowacam-obs-macos PRIVATE ${OBS_LIBRARIES} streaming-core
     CoreFoundation
