@@ -17,7 +17,12 @@ export interface StreamConfig {
 }
 
 export class CameraService {
+  private static get module(): typeof OjowacamCamera | undefined {
+    return OjowacamCamera;
+  }
+
   static async getAvailableCameras(): Promise<CameraDevice[]> {
+    if (!CameraService.module) return [];
     const cameras = await OjowacamCamera.getAvailableCameras();
     return cameras as CameraDevice[];
   }
@@ -33,6 +38,7 @@ export class CameraService {
     height: number,
     fps: number,
   ): Promise<{ width: number; height: number }> {
+    if (!CameraService.module) return { width, height };
     const result = await OjowacamCamera.startCapture(cameraId, width, height, fps);
     if (result && typeof result === 'object' && typeof result.width === 'number') {
       return { width: result.width, height: result.height };
@@ -42,26 +48,32 @@ export class CameraService {
   }
 
   static async stopCapture(): Promise<boolean> {
+    if (!CameraService.module) return false;
     return OjowacamCamera.stopCapture();
   }
 
   static async switchCamera(): Promise<string> {
+    if (!CameraService.module) return '';
     return OjowacamCamera.switchCamera();
   }
 
   static async setTorch(enabled: boolean): Promise<boolean> {
+    if (!CameraService.module) return false;
     return OjowacamCamera.setTorch(enabled);
   }
 
   static async setZoom(zoomLevel: number): Promise<boolean> {
+    if (!CameraService.module) return false;
     return OjowacamCamera.setZoom(zoomLevel);
   }
 
   static async getMaxZoom(cameraId: string): Promise<number> {
+    if (!CameraService.module) return 1.0;
     return OjowacamCamera.getMaxZoom(cameraId);
   }
 
   static async setFocusMode(mode: string): Promise<boolean> {
+    if (!CameraService.module) return false;
     return OjowacamCamera.setFocusMode(mode);
   }
 }
@@ -71,14 +83,17 @@ export class AudioService {
   private static audioSubscription: EmitterSubscription | null = null;
 
   static async startRecording(): Promise<boolean> {
+    if (!OjowacamAudio) return false;
     return OjowacamAudio.startRecording();
   }
 
   static async stopRecording(): Promise<boolean> {
+    if (!OjowacamAudio) return false;
     return OjowacamAudio.stopRecording();
   }
 
   static async getAudioLevels(): Promise<number> {
+    if (!OjowacamAudio) return 0;
     return OjowacamAudio.getAudioLevels();
   }
 
@@ -131,10 +146,12 @@ export class EncoderService {
 
   static async initEncoder(width: number, height: number, bitrate: number, fps: number): Promise<boolean> {
     this.bindNativeEvents();
+    if (!OjowacamEncoder) return false;
     return OjowacamEncoder.initEncoder(width, height, bitrate, fps);
   }
 
   static async releaseEncoder(): Promise<boolean> {
+    if (!OjowacamEncoder) return false;
     return OjowacamEncoder.releaseEncoder();
   }
 
@@ -179,11 +196,13 @@ export class WebRTCService {
 
   static async initWebRTC(): Promise<boolean> {
     this.bindNativeEvents();
+    if (!OjowacamWebRTC) return false;
     return OjowacamWebRTC.initWebRTC();
   }
 
   static async createPeerConnection(iceServers: string[]): Promise<boolean> {
     this.bindNativeEvents();
+    if (!OjowacamWebRTC) return false;
     // Pass each URL as its own entry — natives must not treat a joined string as one URL.
     const urls = iceServers
       .map((s) => (typeof s === 'string' ? s.trim() : ''))
@@ -198,26 +217,32 @@ export class WebRTCService {
    */
   static async createOffer(iceRestart = false): Promise<boolean> {
     this.bindNativeEvents();
+    if (!OjowacamWebRTC) return false;
     return OjowacamWebRTC.createOffer(iceRestart);
   }
 
   static async setRemoteDescription(type: string, sdp: string): Promise<boolean> {
+    if (!OjowacamWebRTC) return false;
     return OjowacamWebRTC.setRemoteDescription(type, sdp);
   }
 
   static async addIceCandidate(candidate: string): Promise<boolean> {
+    if (!OjowacamWebRTC) return false;
     return OjowacamWebRTC.addIceCandidate(candidate);
   }
 
   static async addVideoTrack(trackId: string = 'ojowacam-video'): Promise<boolean> {
+    if (!OjowacamWebRTC) return false;
     return OjowacamWebRTC.addVideoTrack(trackId);
   }
 
   static async addAudioTrack(trackId: string = 'ojowacam-audio'): Promise<boolean> {
+    if (!OjowacamWebRTC) return false;
     return OjowacamWebRTC.addAudioTrack(trackId);
   }
 
   static async closeConnection(): Promise<boolean> {
+    if (!OjowacamWebRTC) return false;
     return OjowacamWebRTC.closeConnection();
   }
 

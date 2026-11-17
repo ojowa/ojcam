@@ -47,7 +47,6 @@ export default function CameraScreen() {
   const [selectedCamera, setSelectedCamera] = React.useState<string>('0');
   const [facing, setFacing] = React.useState<'front' | 'back'>('back');
   const [torch, setTorch] = React.useState(false);
-  const [orientation, setOrientation] = React.useState<'portrait' | 'landscape'>('portrait');
   const [permission, setPermission] = React.useState<boolean | null>(null);
   const [cameraReady, setCameraReady] = React.useState(false);
   const cameraRef = React.useRef<Camera>(null);
@@ -60,6 +59,7 @@ export default function CameraScreen() {
   const [gridOverlay, setGridOverlay] = React.useState(false);
   const [focusPoint, setFocusPoint] = React.useState<{ x: number; y: number } | null>(null);
   const [isPinchZooming, setIsPinchZooming] = React.useState(false);
+  const [showZoomHint, setShowZoomHint] = React.useState(true);
   const pinchStartZoomRef = React.useRef(1.0);
   const zoomDebounceTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -102,31 +102,22 @@ export default function CameraScreen() {
     };
   }, []);
 
+  // Dismiss the pinch-to-zoom hint after a few seconds so users discover
+  // the gesture once, then it stays out of the way.
+  React.useEffect(() => {
+    const timer = setTimeout(() => setShowZoomHint(false), 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
-  // Reflect the actual orientation on mount (used by the orientation lock toggle).
-  // Layout responsiveness is driven by useWindowDimensions (isLandscape), which
-  // updates automatically on rotation.
-  React.useEffect(() => {
-    ScreenOrientation.getOrientationAsync()
-      .then((o) => {
-        const landscape =
-          o === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
-          o === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
-        setOrientation(landscape ? 'landscape' : 'portrait');
-      })
-      .catch(() => undefined);
-  }, []);
-
   const toggleOrientation = async () => {
     try {
-      if (orientation === 'portrait') {
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        setOrientation('landscape');
-      } else {
+      if (isLandscape) {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-        setOrientation('portrait');
+      } else {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
       }
     } catch (error) {
       console.warn('Unable to change orientation:', error);
@@ -152,7 +143,6 @@ export default function CameraScreen() {
         onPanResponderGrant: (_, gestureState) => {
           setIsPinchZooming(true);
           pinchStartZoomRef.current = zoomLevel;
-          if (focusPoint) setFocusPoint(null);
         },
         onPanResponderMove: (_, gestureState) => {
           const delta = -gestureState.dy / 100;
@@ -335,6 +325,13 @@ export default function CameraScreen() {
           </View>
         )}
       </View>
+
+      {/* Zoom hint (discoverability for pinch-to-zoom gesture) */}
+      {showZoomHint && (
+        <View style={styles.zoomHint}>
+          <Text style={styles.zoomHintText}>Pinch to zoom</Text>
+        </View>
+      )}
 
       {/* Zoom indicator (outside the PanResponder view so button touches aren't stolen) */}
       <View style={[styles.zoomIndicator, isLandscape && styles.zoomIndicatorLandscape]}>
@@ -653,6 +650,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
     zIndex: 10,
+  },
+  zoomHint: {
+    position: 'absolute',
+    bottom: 260,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 17, 23, 0.6)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    zIndex: 9,
+  },
+  zoomHintText: {
+    color: '#c9d1d9',
+    fontSize: 12,
+    fontWeight: '500',
   },
   zoomMinus: {
     alignItems: 'center',
