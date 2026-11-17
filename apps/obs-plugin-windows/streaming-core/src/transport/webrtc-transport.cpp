@@ -1275,7 +1275,9 @@ void WebRTCTransport::handleIncomingRtp(
             VideoFrame frame;
             frame.data = frame_data;
             frame.timestamp_us = static_cast<int64_t>(rtp_ts) * 1000000LL / 90000LL;
-            frame.format = VideoPixelFormat::Unknown;
+            // format stays Unknown: this is raw H264 bitstream handed to the
+            // decoder, which sets VideoPixelFormat::YUV420 on each decoded
+            // frame before it reaches FrameConverter::convertToRgba().
             onVideoFrame(frame);
         });
         return;

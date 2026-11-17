@@ -345,9 +345,21 @@ void StreamReceiver::pushVideoFrameToOBS(const VideoFrame& frame) {
         if (onVideoSizeChanged) onVideoSizeChanged(frame.width, frame.height);
     }
 
-    if (frame.format != VideoPixelFormat::Unknown) {
-        impl_->frame_converter->setFormat(frame.format);
+    // Unknown format means the frame bypassed the decoder (e.g. raw H264
+    // NAL units). Do not memcpy encoded bitstream into an RGBA texture —
+    // drop it and log so the misroute is visible in the OBS log.
+    if (frame.format == VideoPixelFormat::Unknown) {
+        static std::atomic<uint64_t> warned_unknown{0};
+        if (warned_unknown.fetch_add(1) < 5) {
+            blog(LOG_WARNING,
+                 "[Ojowacam] Dropping video frame with Unknown pixel format "
+                 "(%dx%d, %zu bytes) — decoder output may not be reaching OBS",
+                 frame.width, frame.height, frame.data.size());
+        }
+        return;
     }
+
+    impl_->frame_converter->setFormat(frame.format);
 
     // Convert to RGBA (YUV420/NV12/RGBA) for the OBS async video path.
     std::vector<uint8_t> rgba;
