@@ -31,7 +31,7 @@ jobs:
           # the plugin's own device discovery and audio decode.
           sudo apt-get install -y cmake build-essential pkg-config \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
-            libjansson-dev libuthash-dev libsimde-dev zlib1g-dev \
+            libjansson-dev uthash-dev libsimde-dev zlib1g-dev \
             libdrm-dev libx11-dev libxcb1-dev libx11-xcb-dev libpulse-dev \
             libavahi-client-dev libopus-dev
 
