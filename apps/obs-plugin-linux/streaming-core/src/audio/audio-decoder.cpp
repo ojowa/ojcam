@@ -1,4 +1,4 @@
-#include "audio/audio-decoder.h"
+#include "decoder/audio-decoder.h"
 #include <cstring>
 #include <cmath>
 #include <obs-module.h>
