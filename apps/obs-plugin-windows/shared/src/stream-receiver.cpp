@@ -324,12 +324,16 @@ bool StreamReceiver::connect(const std::string& device_id,
     }
 
     // The phone is the offerer; OBS answers when its OFFER arrives.
-    impl_->connected.store(true, std::memory_order_release);
-    // Reset only on success — never on entry. Entry reset is what made
-    // kMaxReconnectAttempts unreachable (worker calls connect() each retry).
-    impl_->reconnect_attempts_.store(0, std::memory_order_relaxed);
-
+    // Do NOT set impl_->connected here: transport->connect() may return true
+    // for auto-discover with no URL (just listening, no peer yet). Let the
+    // transport's onConnectionStateChanged callback set impl_->connected
+    // only when the signaling link (and eventually WebRTC media) is actually
+    // established. Setting it unconditionally here makes video_update()
+    // believe the source is connected before any media is flowing.
     if (impl_->transport->isConnected()) {
+        // Reset only on success — never on entry. Entry reset is what made
+        // kMaxReconnectAttempts unreachable (worker calls connect() each retry).
+        impl_->reconnect_attempts_.store(0, std::memory_order_relaxed);
         blog(LOG_INFO, "[Ojowacam] Connected to device %s", device_id.c_str());
     } else {
         blog(LOG_INFO,
