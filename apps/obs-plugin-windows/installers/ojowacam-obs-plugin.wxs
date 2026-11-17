@@ -13,6 +13,14 @@
     <MajorUpgrade DowngradeErrorMessage="A newer Ojowacam OBS Plugin is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Publisher details in Settings -> Apps (Add/Remove Programs):
+         "Publisher" comes from Product/@Manufacturer above; these add the
+         comment, contact, help link and info/about link. -->
+    <Property Id="ARPCOMMENTS" Value="Turn your smartphone into a webcam and microphone for OBS Studio" />
+    <Property Id="ARPCONTACT" Value="Ojowacam Team" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/ojowa/ojcam/issues" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/ojowa/ojcam" />
+
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="CommonAppDataFolder">
         <Directory Id="OBSFolder" Name="obs-studio">

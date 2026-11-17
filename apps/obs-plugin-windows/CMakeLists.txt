@@ -94,6 +94,14 @@ include_directories(
 # Add streaming-core library
 add_subdirectory(streaming-core)
 
+# Publisher/version resource for the DLL (Explorer -> Properties -> Details,
+# Task Manager). Generated from the template so CompanyName/copyright and the
+# version numbers stay in sync with project(VERSION).
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/version.rc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/ojowacam-obs-version.rc
+    @ONLY)
+
 # Windows-specific source files
 set(PLUGIN_SOURCES
     src/obs-registration.cpp
@@ -103,6 +111,7 @@ set(PLUGIN_SOURCES
     shared/src/stream-receiver.cpp
     shared/src/frame-converter.cpp
     shared/src/shared-session.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/ojowacam-obs-version.rc
 )
 
 add_library(ojowacam-obs MODULE ${PLUGIN_SOURCES})
