@@ -31,8 +31,11 @@ jobs:
 
       - name: Configure OBS Studio (macOS)
         run: |
-          cmake -S obs-studio -B obs-studio/build -G "Unix Makefiles" \
-            -DCMAKE_BUILD_TYPE=Release \
+          # OBS 30.x refuses any non-Xcode generator on macOS
+          # (cmake/macos/compilerconfig.cmake: "Building OBS Studio on macOS
+          # requires Xcode generator"). Xcode is multi-config, so build type
+          # is selected at build time via --config Release.
+          cmake -S obs-studio -B obs-studio/build -G Xcode \
             -DENABLE_UI=OFF \
             -DENABLE_PLUGINS=OFF \
             -DENABLE_SCRIPTING=OFF \
@@ -45,14 +48,23 @@ jobs:
 
       - name: Build OBS runtime libraries (macOS)
         run: |
-          cmake --build obs-studio/build --config Release --target libobs-opengl -j $(sysctl -n hw.ncpu)
+          # Full build, mirroring the Windows workflow: every target with an
+          # install rule must exist before cmake --install runs.
+          cmake --build obs-studio/build --config Release -j $(sysctl -n hw.ncpu)
           if [ $? -ne 0 ]; then exit 1; fi
           echo "OBS runtime libraries build complete"
 
       - name: Install OBS to local prefix (macOS)
         run: |
           export OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
-          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX"
+          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX" --config Release
+          # On macOS libobs installs as a framework, and both the framework
+          # and its headers are attached to the obs_libraries component with
+          # EXCLUDE_FROM_ALL — a plain install skips them and the prefix
+          # would end up with no libobs at all. Request the component
+          # explicitly (CMake: EXCLUDE_FROM_ALL rules are "only installed as
+          # part of a component-specific installation").
+          cmake --install obs-studio/build --prefix "$OBS_INSTALL_PREFIX" --config Release --component obs_libraries
           if [ $? -ne 0 ]; then exit 1; fi
           echo "OBS installed to $OBS_INSTALL_PREFIX"
 
@@ -79,12 +91,36 @@ jobs:
           echo "=== OBS Libraries ==="
           find "$OBS_INSTALL_PREFIX/lib" -name "*.dylib" -o -name "*.a" 2>/dev/null | head -10 || find "$OBS_INSTALL_PREFIX/lib" -name "*.so.*" 2>/dev/null | head -10
 
+      - name: Stage OBS headers for plugin
+        run: |
+          # OBS's header install (component obs_libraries) puts the public
+          # headers inside the framework bundle; the plugin's manual
+          # detection fallback expects <prefix>/include/obs/*.h — same
+          # staging the Windows workflow does.
+          OBS_INSTALL_PREFIX="$GITHUB_WORKSPACE/obs-install"
+          mkdir -p "$OBS_INSTALL_PREFIX/include/obs"
+          if [ ! -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h" ]; then
+            cp -R obs-studio/libobs/. "$OBS_INSTALL_PREFIX/include/obs/"
+          fi
+          test -f "$OBS_INSTALL_PREFIX/include/obs/obs-module.h"
+          # Belt and braces: if the framework did not land in the prefix,
+          # stage it straight from the build tree so find_library sees it.
+          if [ ! -d "$OBS_INSTALL_PREFIX/Frameworks/libobs.framework" ]; then
+            FW=$(find obs-studio/build -type d -name "libobs.framework" | head -1)
+            if [ -n "$FW" ]; then
+              mkdir -p "$OBS_INSTALL_PREFIX/Frameworks"
+              cp -R "$FW" "$OBS_INSTALL_PREFIX/Frameworks/"
+            fi
+          fi
+          echo "=== OBS libobs artifacts in prefix ==="
+          find "$OBS_INSTALL_PREFIX" \( -name "libobs*" -o -name "obs-module.h" \) | head -20
+
       - name: Configure Ojowacam OBS Plugin (macOS)
         run: |
           export CMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/obs-install"
           cmake -S apps/obs-plugin-macos -B apps/obs-plugin-macos/build -G "Unix Makefiles" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$OBS_INSTALL_PREFIX"
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/obs-install"
           if [ $? -ne 0 ]; then exit 1; fi
           echo "Ojowacam plugin configure complete"
 
@@ -124,6 +160,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ojowacam-obs-macos
+          if-no-files-found: error
           path: |
             apps/obs-plugin-macos/build/data/obs-plugins/ojowacam-obs/**/*.bundle
             apps/obs-plugin-macos/build/data/obs-plugins/ojowacam-obs/**/*.dylib

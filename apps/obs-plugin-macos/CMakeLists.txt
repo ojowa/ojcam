@@ -31,6 +31,10 @@ endforeach()
 if(NOT OBS_FOUND)
     message(STATUS "OBS CMake config package not found, using manual detection")
 
+    # Manual fallback (what CI uses: OBS's default install skips the
+    # Development component, so no OBSConfig.cmake lands in the prefix).
+    # On macOS OBS builds libobs as a framework, so accept both the plain
+    # dylib layout (Windows/Linux) and Frameworks/libobs.framework.
     find_path(OBS_INCLUDE_DIR
         NAMES obs-module.h
         PATHS "${CMAKE_PREFIX_PATH}/include"
@@ -39,8 +43,8 @@ if(NOT OBS_FOUND)
     )
 
     find_library(OBS_LIB
-        NAMES obs
-        PATHS "${CMAKE_PREFIX_PATH}/lib"
+        NAMES obs libobs
+        PATHS "${CMAKE_PREFIX_PATH}/lib" "${CMAKE_PREFIX_PATH}/Frameworks"
         NO_DEFAULT_PATH
     )
 
