@@ -1,30 +1,44 @@
 import React from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { HomeScreenNavigationProp } from '../../App';
-import { streamSettings } from '../services/config/StreamSettings';
+import { streamingService } from '../services/StreamingService';
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
   const [qualityLabel, setQualityLabel] = React.useState('4K');
   const [qualityFps, setQualityFps] = React.useState(30);
 
-  // Reflect the saved stream preferences whenever this screen regains focus.
-  useFocusEffect(
-    React.useCallback(() => {
-      let active = true;
-      void (async () => {
-        await streamSettings.load();
-        if (!active) return;
-        setQualityLabel(streamSettings.getResolutionLabel());
-        setQualityFps(streamSettings.getFps());
-      })();
-      return () => {
-        active = false;
-      };
-    }, []),
-  );
+  // The phone is a passive camera: there is no "Start Camera" button.
+  // As soon as OBS connects (peer attached), the camera screen comes up
+  // automatically — OBS drives the session from there.
+  React.useEffect(() => {
+    let active = true;
+    let prevConnected = streamingService.getState().isConnected;
+
+    const onStateChange = (state: ReturnType<typeof streamingService.getState>) => {
+      if (!active) return;
+      if (state.isConnected && !prevConnected) {
+        navigation.navigate('Camera');
+      }
+      prevConnected = state.isConnected;
+    };
+    streamingService.setOnStateChange(onStateChange);
+
+    // Already connected when this screen appears: go straight to the camera.
+    if (
+      streamingService.getState().isConnected &&
+      navigation.getState().routes.findIndex((r) => r.name === 'Camera') < 0
+    ) {
+      navigation.navigate('Camera');
+    }
+
+    return () => {
+      active = false;
+      streamingService.setOnStateChange(() => undefined);
+    };
+  }, [navigation]);
 
   return (
     <ScrollView style={styles.container}>
@@ -34,9 +48,6 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.card}>
-        <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Camera')}>
-          <Text style={styles.buttonText}>Start Camera</Text>
-        </TouchableOpacity>
         <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Connection')}>
           <Text style={styles.buttonText}>Connect to OBS</Text>
         </TouchableOpacity>
