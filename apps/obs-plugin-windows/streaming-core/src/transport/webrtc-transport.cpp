@@ -214,6 +214,15 @@ public:
             CLOSE_SOCKET(sock_); sock_ = INVALID_SOCKET; return false;
         }
 
+        // Set socket timeouts so a stalled handshake or dead peer cannot
+        // block recv() forever (P6/P7).
+        DWORD recv_timeout = 5000;  // 5 s
+        DWORD send_timeout = 5000;
+        setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO,
+                   reinterpret_cast<const char*>(&recv_timeout), sizeof(recv_timeout));
+        setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO,
+                   reinterpret_cast<const char*>(&send_timeout), sizeof(send_timeout));
+
         // WebSocket handshake
         std::string key;
         for (int i = 0; i < 16; ++i) key += static_cast<char>(rand() & 0xFF);
@@ -238,8 +247,52 @@ public:
         if (send(sock_, handshake.c_str(), static_cast<int>(handshake.size()), 0) == SOCKET_ERROR) {
             CLOSE_SOCKET(sock_); sock_ = INVALID_SOCKET; return false;
         }
-        char buf[1024];
-        recv(sock_, buf, sizeof(buf), 0);
+
+        // Read and validate the server's 101 Switching Protocols response
+        // (P3). Never proceed without a valid handshake.
+        char buf[2048];
+        int total = 0;
+        while (total < static_cast<int>(sizeof(buf)) - 1) {
+            int n = recv(sock_, buf + total, static_cast<int>(sizeof(buf) - total - 1), 0);
+            if (n <= 0) {
+                CLOSE_SOCKET(sock_); sock_ = INVALID_SOCKET; return false;
+            }
+            total += n;
+            buf[total] = '\0';
+            if (strstr(buf, "\r\n\r\n")) break;
+        }
+        std::string response(buf, total);
+        if (response.find("HTTP/1.1 101") == std::string::npos) {
+            blog(LOG_ERROR,
+                 "[Ojowacam] WebSocket handshake failed: no 101 response from %s", url.c_str());
+            CLOSE_SOCKET(sock_); sock_ = INVALID_SOCKET; return false;
+        }
+        // Verify Sec-WebSocket-Accept = base64(sha1(key + GUID))
+        static const char* guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        std::string digest_input = key + guid;
+        unsigned char sha[20];
+        if (mbedtls_sha1(reinterpret_cast<const unsigned char*>(digest_input.data()),
+                         digest_input.size(), sha) != 0) {
+            CLOSE_SOCKET(sock_); sock_ = INVALID_SOCKET; return false;
+        }
+        unsigned char accept_buf[64];
+        size_t accept_len = 0;
+        if (mbedtls_base64_encode(accept_buf, sizeof(accept_buf), &accept_len, sha,
+                                  sizeof(sha)) != 0) {
+            CLOSE_SOCKET(sock_); sock_ = INVALID_SOCKET; return false;
+        }
+        std::string expected_accept(reinterpret_cast<char*>(accept_buf), accept_len);
+        std::string accept_header = "sec-websocket-accept: " + expected_accept + "\r\n";
+        // Case-insensitive search for the accept header
+        std::string lower = response;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.find(accept_header) == std::string::npos) {
+            blog(LOG_ERROR,
+                 "[Ojowacam] WebSocket handshake failed: invalid Sec-WebSocket-Accept from %s",
+                 url.c_str());
+            CLOSE_SOCKET(sock_); sock_ = INVALID_SOCKET; return false;
+        }
 
         running_ = true;
         recv_thread_ = std::thread(&SignalingClient::recvLoop, this);
@@ -496,28 +549,68 @@ public:
         return started_;
     }
 
+    // Returns true if the plugin WebSocket server is listening (bound to
+    // kPluginWsPort). Returns false if the port is already in use — callers
+    // must treat that as fatal: without the server, the phone cannot dial in.
+    bool registerAcceptor(uint64_t id, Acceptor acceptor) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        acceptors_[id] = std::move(acceptor);
+        if (!started_) {
+            started_ = listener_.start(kPluginWsPort, [this](ojo_socket_t socket) {
+                this->onAccept(socket);
+            });
+        }
+        return started_;
+    }
+
     void unregisterAcceptor(uint64_t id) {
         std::lock_guard<std::mutex> lock(mutex_);
         acceptors_.erase(id);
+        if (acceptors_.empty()) {
+            next_acceptor_ = 0;
+        } else if (next_acceptor_ >= acceptors_.size()) {
+            next_acceptor_ = 0;
+        }
     }
 
 private:
     void onAccept(ojo_socket_t socket) {
-        std::map<uint64_t, Acceptor> snapshot;
+        std::vector<std::pair<uint64_t, Acceptor>> acceptors;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            snapshot = acceptors_;
+            if (acceptors_.empty()) {
+                CLOSE_SOCKET(socket);
+                return;
+            }
+            acceptors.reserve(acceptors_.size());
+            for (auto& entry : acceptors_) {
+                acceptors.push_back(entry);
+            }
         }
-        for (auto& entry : snapshot) {
-            if (entry.second(socket)) return;
+
+        // Round-robin dispatch: start from next_acceptor_ and wrap around,
+        // so inbound connections are distributed across all registered
+        // receivers instead of always going to the first one.
+        size_t start = next_acceptor_ % acceptors.size();
+        bool taken = false;
+        for (size_t i = 0; i < acceptors.size(); ++i) {
+            size_t idx = (start + i) % acceptors.size();
+            if (acceptors[idx].second(socket)) {
+                taken = true;
+                next_acceptor_ = (idx + 1) % acceptors.size();
+                break;
+            }
         }
-        // No transport could take the connection: close it cleanly.
-        CLOSE_SOCKET(socket);
+        if (!taken) {
+            // No transport could take the connection: close it cleanly.
+            CLOSE_SOCKET(socket);
+        }
     }
 
     std::mutex mutex_;
     WsListener listener_;
     std::map<uint64_t, Acceptor> acceptors_;
+    size_t next_acceptor_ = 0;
     bool started_ = false;
 };
 
@@ -742,17 +835,32 @@ void WebRTCTransport::onInboundSignaling(uintptr_t socket_handle) {
 
 bool WebRTCTransport::tryAcceptInbound(uintptr_t socket_handle) {
     ojo_socket_t socket = static_cast<ojo_socket_t>(socket_handle);
-    std::lock_guard<std::mutex> lock(host_->state_mutex);
 
-    if (connected_ || (impl_->signaling && impl_->signaling->isActive())) {
-        // First session wins: the plugin prefers its own outbound connection,
-        // so a simultaneous dial from the phone is rejected cleanly.
-        return false;
+    // Quick eligibility check under the lock, then release it before
+    // calling accept() (which may join a blocked recv thread). Holding the
+    // lock during join() would stall all other connect/disconnect/accept
+    // operations (P13).
+    bool should_accept = false;
+    {
+        std::lock_guard<std::mutex> lock(host_->state_mutex);
+        if (connected_ || (impl_->signaling && impl_->signaling->isActive())) {
+            // First session wins: the plugin prefers its own outbound
+            // connection, so a simultaneous dial from the phone is rejected
+            // cleanly.
+            return false;
+        }
+        if (!impl_->signaling) {
+            // connect() has not wired signaling yet; nothing can own this
+            // socket.
+            return false;
+        }
+        should_accept = true;
     }
-    if (!impl_->signaling) {
-        // connect() has not wired signaling yet; nothing can own this socket.
-        return false;
-    }
+
+    if (!should_accept) return false;
+
+    // Accept outside the lock so recv_thread_.join() cannot block the
+    // state_mutex.
     if (!impl_->signaling->accept(socket)) {
         return false;
     }
@@ -1056,8 +1164,34 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
             [this](rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc) {
                 impl_->peer_connection = pc;
             },
-            [](webrtc::PeerConnectionInterface::IceConnectionState) {},
-            [](webrtc::PeerConnectionInterface::IceGatheringState) {});
+            [this](webrtc::PeerConnectionInterface::IceConnectionState state) {
+                const char* name = "unknown";
+                switch (state) {
+                    case webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionNew: name = "new"; break;
+                    case webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionChecking: name = "checking"; break;
+                    case webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionConnected: name = "connected"; break;
+                    case webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionCompleted: name = "completed"; break;
+                    case webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionFailed: name = "failed"; break;
+                    case webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionDisconnected: name = "disconnected"; break;
+                    case webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionClosed: name = "closed"; break;
+                }
+                blog(LOG_INFO, "[Ojowacam] ICE connection state (Windows): %s", name);
+                if (state == webrtc::PeerConnectionInterface::IceConnectionState::kIceConnectionFailed) {
+                    // Terminal ICE failure: tear down so reconnect worker can start fresh.
+                    blog(LOG_WARNING,
+                         "[Ojowacam] ICE failed (Windows); tearing down media session for reconnect");
+                    disconnect();
+                }
+            },
+            [this](webrtc::PeerConnectionInterface::IceGatheringState state) {
+                const char* name = "unknown";
+                switch (state) {
+                    case webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringNew: name = "new"; break;
+                    case webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringGathering: name = "gathering"; break;
+                    case webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringComplete: name = "complete"; break;
+                }
+                blog(LOG_DEBUG, "[Ojowacam] ICE gathering state (Windows): %s", name);
+            });
     }
     if (impl_->peer_connection) {
         {
