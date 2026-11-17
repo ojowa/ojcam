@@ -2,11 +2,14 @@
  * BeaconDiscovery.ts
  *
  * Same-network UDP discovery. While the signaling server is running, the
- * phone broadcasts "OJOWACAM|1|role=phone|ws=<port>" to 255.255.255.255:8765
- * every 1.5 s and listens for the OBS plugin's answering beacon
- * ("OJOWACAM|1|role=obs|ws=<port>"). The plugin's WebSocket server is then
- * dialed by SignalingServer (see noteObsTarget). Addresses always come from
- * the datagram's source IP — payload IPs are never trusted.
+ * phone broadcasts "OJOWACAM|1|role=phone|ws=<port>[|id=<device>]" to
+ * 255.255.255.255:8765 every 1.5 s and listens for the OBS plugin's
+ * answering beacon ("OJOWACAM|1|role=obs|ws=<port>"). The plugin uses the
+ * optional id as the device's stable key so several phones on one network
+ * stay distinct (and one phone survives IP changes). The plugin's
+ * WebSocket server is then dialed by SignalingServer (see noteObsTarget).
+ * Addresses always come from the datagram's source IP — payload IPs are
+ * never trusted.
  */
 
 import { utf8Decode, utf8Encode } from '../../utils/utf8';
@@ -57,8 +60,12 @@ export function parseObsBeacon(data: Uint8Array | string, sourceIp: string): Obs
   return { ip: sourceIp, port: wsPort };
 }
 
-export function buildPhoneBeacon(wsPort: number): Uint8Array {
-  return utf8Encode(`${BEACON_MAGIC}|role=phone|ws=${wsPort}`);
+export function buildPhoneBeacon(wsPort: number, deviceId?: string): Uint8Array {
+  // The id is the plugin's stable per-phone key: strip the field delimiter
+  // and cap the length so a hostile/odd id can never break parsing.
+  const sanitized = deviceId ? deviceId.replace(/\|/g, '').slice(0, 64) : '';
+  const idField = sanitized ? `|id=${sanitized}` : '';
+  return utf8Encode(`${BEACON_MAGIC}|role=phone|ws=${wsPort}${idField}`);
 }
 
 export class BeaconDiscovery {
@@ -76,11 +83,12 @@ export class BeaconDiscovery {
   }
 
   /**
-   * Bind the discovery port, advertise this phone, and watch for the OBS
-   * plugin. Returns false when UDP is unavailable — callers treat that as
-   * "no discovery", never as success.
+   * Bind the discovery port, advertise this phone (with deviceId as the
+   * stable id when given), and watch for the OBS plugin. Returns false when
+   * UDP is unavailable — callers treat that as "no discovery", never as
+   * success.
    */
-  start(wsPort: number): boolean {
+  start(wsPort: number, deviceId?: string): boolean {
     if (this.running) return true;
     if (wsPort <= 0 || wsPort > 65535) return false;
 
@@ -111,7 +119,7 @@ export class BeaconDiscovery {
     });
 
     socket.bind(DISCOVERY_PORT, () => {
-      const beacon = buildPhoneBeacon(wsPort);
+      const beacon = buildPhoneBeacon(wsPort, deviceId);
       const send = () => {
         if (!this.running || this.socket !== socket) return;
         try {

@@ -12,6 +12,7 @@
 import { sha1 } from 'js-sha1';
 import { utf8Decode, utf8Encode } from '../../utils/utf8';
 import { beaconDiscovery } from '../discovery/BeaconDiscovery';
+import { deviceIdentity } from '../security/DeviceIdentity';
 export { utf8Decode, utf8Encode };
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -329,7 +330,17 @@ export class SignalingServer {
           // beacon; if no inbound peer shows up within the grace period, the
           // dial timer connects to the plugin's own WebSocket server.
           beaconDiscovery.setOnObsDiscovered(target => this.noteObsTarget(target));
-          beaconDiscovery.start(this.port);
+          // Include the stable device id so the plugin can list several
+          // phones on one network side by side. getDeviceId() throws until
+          // identity setup ran; then the beacon simply omits the id and the
+          // plugin falls back to keying by IP.
+          let deviceId: string | undefined;
+          try {
+            deviceId = deviceIdentity.getDeviceId();
+          } catch {
+            deviceId = undefined;
+          }
+          beaconDiscovery.start(this.port, deviceId);
           this.startDialTimer();
           if (!settled) {
             settled = true;

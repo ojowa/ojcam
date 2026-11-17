@@ -456,3 +456,20 @@ describe('parseObsBeacon', () => {
     expect(parseObsBeacon('OJOWACAM|1|role=obs|ws=8765', '')).toBeNull();
   });
 });
+
+describe('buildPhoneBeacon', () => {
+  it('carries the phone role, port, and optional stable id', () => {
+    expect(utf8Decode(buildPhoneBeacon(8765))).toBe('OJOWACAM|1|role=phone|ws=8765');
+    expect(utf8Decode(buildPhoneBeacon(8765, 'abc123'))).toBe(
+      'OJOWACAM|1|role=phone|ws=8765|id=abc123',
+    );
+  });
+
+  it('strips field delimiters and caps the id so parsing never breaks', () => {
+    const beacon = utf8Decode(buildPhoneBeacon(8765, `||${'a'.repeat(100)}||`));
+    // Exactly five fields (the magic contains one separator itself):
+    // OJOWACAM, 1, role, ws, id — no injected separators.
+    expect(beacon.split('|')).toHaveLength(5);
+    expect(beacon.endsWith(`|id=${'a'.repeat(64)}`)).toBe(true);
+  });
+});
