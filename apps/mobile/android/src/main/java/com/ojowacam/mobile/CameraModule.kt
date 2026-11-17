@@ -365,8 +365,7 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             }
             val characteristics = cameraManager.getCameraCharacteristics(id)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
-            val actualMaxZoom = Math.max(maxZoom, 4.0f)
-            val clampedZoom = zoomLevel.coerceIn(1.0f, actualMaxZoom)
+            val clampedZoom = zoomLevel.coerceIn(1.0f, maxZoom)
             val builder = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             builder.addTarget(imageReader!!.surface)
             builder.set(CaptureRequest.SCALER_CROP_REGION, calculateCropRegion(characteristics, clampedZoom))
@@ -375,6 +374,17 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ZOOM_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getMaxZoom(cameraId: String, promise: Promise) {
+        try {
+            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
+            promise.resolve(maxZoom.toDouble())
+        } catch (e: Exception) {
+            promise.reject("GET_MAX_ZOOM_ERROR", e.message, e)
         }
     }
 

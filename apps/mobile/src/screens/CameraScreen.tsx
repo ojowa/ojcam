@@ -205,6 +205,13 @@ export default function CameraScreen() {
       if (available.length > 0) {
         setSelectedCamera(available[0].id);
         setFacing(available[0].facing === 'front' ? 'front' : 'back');
+        // Sync maxZoom with the hardware capability of the selected camera.
+        try {
+          const max = await CameraService.getMaxZoom(available[0].id);
+          setMaxZoom(Math.max(1.0, max));
+        } catch {
+          // Keep the default maxZoom if the query fails.
+        }
       }
     } catch (error) {
       console.warn('Failed to list cameras:', error);
@@ -218,10 +225,23 @@ export default function CameraScreen() {
     }, []),
   );
 
-  const toggleFacing = () => {
+  const toggleFacing = async () => {
     setFacing((prev) => (prev === 'back' ? 'front' : 'back'));
     const next = cameras.find((c) => c.facing === (facing === 'back' ? 'front' : 'back'));
-    if (next) setSelectedCamera(next.id);
+    if (next) {
+      // Reset zoom when switching cameras — each camera starts at 1.0x.
+      setZoomLevel(1.0);
+      pinchStartZoomRef.current = 1.0;
+      applyZoom(1.0);
+      setSelectedCamera(next.id);
+      // Sync maxZoom with the hardware capability of the new camera.
+      try {
+        const max = await CameraService.getMaxZoom(next.id);
+        setMaxZoom(Math.max(1.0, max));
+      } catch {
+        // Keep the current maxZoom if the query fails.
+      }
+    }
   };
 
   const handleZoomChange = (delta: number) => {

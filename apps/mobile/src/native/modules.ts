@@ -57,6 +57,10 @@ export class CameraService {
     return OjowacamCamera.setZoom(zoomLevel);
   }
 
+  static async getMaxZoom(cameraId: string): Promise<number> {
+    return OjowacamCamera.getMaxZoom(cameraId);
+  }
+
   static async setFocusMode(mode: string): Promise<boolean> {
     return OjowacamCamera.setFocusMode(mode);
   }
