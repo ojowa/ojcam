@@ -359,7 +359,10 @@ class CameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun setZoom(zoomLevel: Float, promise: Promise) {
         try {
             val id = currentCameraId
-            if (id == null || captureSession == null) { promise.resolve(false); return }
+            if (id == null || captureSession == null || cameraDevice == null || imageReader == null) {
+                promise.resolve(false)
+                return
+            }
             val characteristics = cameraManager.getCameraCharacteristics(id)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
             val actualMaxZoom = Math.max(maxZoom, 4.0f)

@@ -60,7 +60,47 @@ export default function CameraScreen() {
   const [gridOverlay, setGridOverlay] = React.useState(false);
   const [focusPoint, setFocusPoint] = React.useState<{ x: number; y: number } | null>(null);
   const [isPinchZooming, setIsPinchZooming] = React.useState(false);
-  const [pinchStartZoom, setPinchStartZoom] = React.useState<number>(1.0);
+  const pinchStartZoomRef = React.useRef(1.0);
+  const zoomDebounceTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Apply a zoom level to the native camera immediately (used for discrete
+  // button taps and for flushing the final pinch value on release).
+  const applyZoom = React.useCallback(
+    (level: number) => {
+      if (zoomDebounceTimer.current) {
+        clearTimeout(zoomDebounceTimer.current);
+        zoomDebounceTimer.current = null;
+      }
+      void CameraService.setZoom(level).catch(() => undefined);
+    },
+    [],
+  );
+
+  // Debounce native zoom calls during continuous pinch dragging so we don't
+  // tear down and rebuild the Camera2 capture request on every drag frame.
+  const debounceZoom = React.useCallback(
+    (level: number) => {
+      if (zoomDebounceTimer.current) {
+        clearTimeout(zoomDebounceTimer.current);
+      }
+      zoomDebounceTimer.current = setTimeout(() => {
+        zoomDebounceTimer.current = null;
+        void CameraService.setZoom(level).catch(() => undefined);
+      }, 120);
+    },
+    [],
+  );
+
+  // Flush any pending debounced zoom on unmount so we don't call setZoom on
+  // a torn-down component.
+  React.useEffect(() => {
+    return () => {
+      if (zoomDebounceTimer.current) {
+        clearTimeout(zoomDebounceTimer.current);
+        zoomDebounceTimer.current = null;
+      }
+    };
+  }, []);
 
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
@@ -99,29 +139,40 @@ export default function CameraScreen() {
   }, [focusMode]);
 
   // Pinch-to-zoom responder for the preview.
+  // Vertical drag smoothly changes zoom level (negative dy = zoom in).
+  // The responder only claims gestures that look like a drag (movement > 4
+  // points) so taps on the zoom buttons inside the preview are not stolen.
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+          return Math.abs(gestureState.dy) > 4 || Math.abs(gestureState.dx) > 4;
+        },
         onPanResponderGrant: (_, gestureState) => {
           setIsPinchZooming(true);
-          setPinchStartZoom(zoomLevel);
+          pinchStartZoomRef.current = zoomLevel;
           if (focusPoint) setFocusPoint(null);
         },
         onPanResponderMove: (_, gestureState) => {
-          // Vertical drag smoothly changes zoom level (negative dy = zoom in)
           const delta = -gestureState.dy / 100;
-          setZoomLevel((prev) => Math.min(maxZoom, Math.max(1.0, pinchStartZoom + delta)));
+          const next = Math.min(
+            maxZoom,
+            Math.max(1.0, pinchStartZoomRef.current + delta),
+          );
+          setZoomLevel(next);
+          debounceZoom(next);
         },
         onPanResponderRelease: () => {
           setIsPinchZooming(false);
+          applyZoom(zoomLevel);
         },
         onPanResponderTerminate: () => {
           setIsPinchZooming(false);
+          applyZoom(zoomLevel);
         },
       }),
-    [zoomLevel, isPinchZooming]
+    [maxZoom, zoomLevel, debounceZoom, applyZoom],
   );
 
   // Tap to focus / expose on the preview.
@@ -174,14 +225,11 @@ export default function CameraScreen() {
   };
 
   const handleZoomChange = (delta: number) => {
-    setZoomLevel((prev) => Math.min(maxZoom, Math.max(1.0, prev + delta)));
+    const next = Math.min(maxZoom, Math.max(1.0, zoomLevel + delta));
+    setZoomLevel(next);
     setIsPinchZooming(false);
+    applyZoom(next);
   };
-
-  // Apply zoom changes to the camera hardware.
-  React.useEffect(() => {
-    void CameraService.setZoom(zoomLevel).catch(() => undefined);
-  }, [zoomLevel]);
 
   const handleFocusModeChange = (mode: FocusMode) => {
     setFocusMode(mode);
@@ -266,17 +314,17 @@ export default function CameraScreen() {
             <View style={[styles.gridLineV, styles.gridLineVRight]} />
           </View>
         )}
+      </View>
 
-        {/* Zoom indicator */}
-        <View style={[styles.zoomIndicator, isLandscape && styles.zoomIndicatorLandscape]}>
-          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(-0.5)}>
-            <Text style={styles.zoomText}>−</Text>
-          </TouchableOpacity>
-          <Text style={styles.zoomText}>{zoomLevel.toFixed(1)}×</Text>
-          <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(0.5)}>
-            <Text style={styles.zoomText}>+</Text>
-          </TouchableOpacity>
-        </View>
+      {/* Zoom indicator (outside the PanResponder view so button touches aren't stolen) */}
+      <View style={[styles.zoomIndicator, isLandscape && styles.zoomIndicatorLandscape]}>
+        <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(-0.5)}>
+          <Text style={styles.zoomText}>−</Text>
+        </TouchableOpacity>
+        <Text style={styles.zoomText}>{zoomLevel.toFixed(1)}×</Text>
+        <TouchableOpacity style={styles.zoomMinus} onPress={() => handleZoomChange(0.5)}>
+          <Text style={styles.zoomText}>+</Text>
+        </TouchableOpacity>
       </View>
 
       <SafeAreaView style={[styles.topBar, isLandscape && styles.topBarLandscape]} pointerEvents="box-none">
