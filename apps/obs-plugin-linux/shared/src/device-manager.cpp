@@ -411,7 +411,9 @@ static uint64_t NowMs() {
 // Phones re-beacon every 1.5 s; this long without a beacon means the app
 // closed or the phone left the network. Entries with last_seen_ms == 0
 // (mDNS, manual) are not beacon-tracked and never expire here.
-static constexpr uint64_t kBeaconTtlMs = 8000;
+// 15 s tolerates about 10 missed beacons, so a briefly sleeping phone on
+// the same network keeps its entry instead of disappearing and reappearing.
+static constexpr uint64_t kBeaconTtlMs = 15000;
 
 static bool IsBeaconDevice(const ojowacam::DiscoveredDevice& d) {
     return d.device_id.rfind("phone:", 0) == 0 ||
@@ -732,6 +734,23 @@ void DeviceManager::StopDiscovery() {
         delete ctx;
         mdns_ref_ = nullptr;
     }
+}
+
+void DeviceManager::sendUnicastBeacon(const std::string &ip) {
+    if (!udp_ref_) return;
+    auto* udp = static_cast<UdpBeaconContext*>(udp_ref_);
+    if (udp->sock == OJO_INVALID_UDP_SOCKET) return;
+
+    const std::string beacon =
+        std::string(ojowacam::kBeaconMagic) + "|role=obs|ws=" + std::to_string(ojowacam::kPluginWsPort);
+
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(ojowacam::kDiscoveryUdpPort);
+    if (inet_pton(AF_INET, ip.c_str(), &dst.sin_addr) <= 0) return;
+
+    sendto(udp->sock, beacon.c_str(), static_cast<int>(beacon.size()), 0,
+           reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
 }
 
 } // namespace ojowacam

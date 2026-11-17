@@ -482,7 +482,10 @@ public:
         return server;
     }
 
-    void registerAcceptor(uint64_t id, Acceptor acceptor) {
+    // Returns true if the plugin WebSocket server is listening (bound to
+    // kPluginWsPort). Returns false if the port is already in use — callers
+    // must treat that as fatal: without the server, the phone cannot dial in.
+    bool registerAcceptor(uint64_t id, Acceptor acceptor) {
         std::lock_guard<std::mutex> lock(mutex_);
         acceptors_[id] = std::move(acceptor);
         if (!started_) {
@@ -490,6 +493,7 @@ public:
                 this->onAccept(socket);
             });
         }
+        return started_;
     }
 
     void unregisterAcceptor(uint64_t id) {
@@ -685,9 +689,21 @@ bool WebRTCTransport::connect(const std::string& url) {
     // The plugin always hosts a WebSocket server so the phone can dial in
     // ("both ends host"). The server is process-wide: independent receivers
     // (video, Wireless Microphone) share the single port.
-    PluginWsServer::instance().registerAcceptor(host_->ws_id, [this](ojo_socket_t socket) {
-        return this->tryAcceptInbound(static_cast<uintptr_t>(socket));
-    });
+    // If the port is already in use, inbound dialing is impossible — log it
+    // loudly but don't abort: an outbound dial to ws://phone-ip:8765 can
+    // still establish the signaling link.
+    const bool ws_server_started =
+        PluginWsServer::instance().registerAcceptor(host_->ws_id, [this](ojo_socket_t socket) {
+            return this->tryAcceptInbound(static_cast<uintptr_t>(socket));
+        });
+    if (!ws_server_started) {
+        blog(LOG_ERROR,
+             "[Ojowacam] Plugin WebSocket server could not bind port %u — "
+             "inbound dial from the phone will not work. Port may be in use "
+             "by another process; outbound dial to ws://phone-ip:8765 is "
+             "still possible if a URL is configured.",
+             kPluginWsPort);
+    }
 
     bool dialed = false;
     if (!url.empty()) {

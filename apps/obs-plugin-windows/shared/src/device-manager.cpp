@@ -411,7 +411,9 @@ static uint64_t NowMs() {
 // Phones re-beacon every 1.5 s; this long without a beacon means the app
 // closed or the phone left the network. Entries with last_seen_ms == 0
 // (mDNS, manual) are not beacon-tracked and never expire here.
-static constexpr uint64_t kBeaconTtlMs = 8000;
+// 15 s tolerates about 10 missed beacons, so a briefly sleeping phone on
+// the same network keeps its entry instead of disappearing and reappearing.
+static constexpr uint64_t kBeaconTtlMs = 15000;
 
 static bool IsBeaconDevice(const ojowacam::DiscoveredDevice& d) {
     return d.device_id.rfind("phone:", 0) == 0 ||
