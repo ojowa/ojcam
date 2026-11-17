@@ -1032,7 +1032,13 @@ void WebRTCTransport::setRemoteDescription(const std::string& type, const std::s
                         blog(LOG_ERROR, "[Ojowacam] SetRemoteDescription failed");
                         return;
                     }
+                    // Initialize the video decoder with the codec from the
+                    // offer (H264 on the native WebRTC path). The libdatachannel
+                    // path calls onVideoCodecNegotiated from handleIncomingRtp.
+                    if (onVideoCodecNegotiated) onVideoCodecNegotiated("H264");
                     webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+                    options.offer_to_receive_video = true;
+                    options.offer_to_receive_audio = true;
                     impl_->peer_connection->CreateAnswer(
                         [this](webrtc::CreateSessionDescriptionObserver::Result result) {
                             if (!result.ok()) return;

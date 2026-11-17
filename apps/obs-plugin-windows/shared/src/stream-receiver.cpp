@@ -302,10 +302,10 @@ bool StreamReceiver::connect(const std::string& device_id,
         ~DialGuard() { flag.store(false, std::memory_order_release); }
     } dial_guard{impl_->dialing};
 
-    // Initialize decoders based on expected stream config
-    if (!impl_->video_decoder->isInitialized()) {
-        impl_->video_decoder->initialize(1920, 1080, "H264");
-    }
+    // Initialize decoders based on expected stream config.
+    // Video decoder is initialized lazily via onVideoCodecNegotiated when the
+    // phone's offer arrives (carries the negotiated codec). Audio decoder is
+    // initialized here with OPUS since the phone always sends Opus audio.
     if (!impl_->audio_decoder->isInitialized()) {
         impl_->audio_decoder->initialize(48000, 2, "OPUS");
     }
