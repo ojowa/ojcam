@@ -17,7 +17,6 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { CameraService } from '../native/modules';
 import { CameraDevice } from '../native/modules';
-import { signalingService } from '../services/signaling/SignalingService';
 import { streamingService } from '../services/StreamingService';
 import { streamSettings } from '../services/config/StreamSettings';
 
@@ -59,15 +58,9 @@ export default function CameraScreen() {
   const [focusMode, setFocusMode] = React.useState<FocusMode>('continuousAutoFocus');
   const [whiteBalance, setWhiteBalance] = React.useState<WhiteBalance>('auto');
   const [gridOverlay, setGridOverlay] = React.useState(false);
-  const [timerActive, setTimerActive] = React.useState(false);
-  const [timerSeconds, setTimerSeconds] = React.useState(3);
   const [focusPoint, setFocusPoint] = React.useState<{ x: number; y: number } | null>(null);
   const [isPinchZooming, setIsPinchZooming] = React.useState(false);
   const [pinchStartZoom, setPinchStartZoom] = React.useState<number>(1.0);
-
-  // Streaming state
-  const [isStreaming, setIsStreaming] = React.useState(false);
-  const [streamError, setStreamError] = React.useState<string | null>(null);
 
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
@@ -139,8 +132,9 @@ export default function CameraScreen() {
     setTimeout(() => void CameraService.setFocusMode(focusMode).catch(() => undefined), 1500);
   };
 
-  // Request permissions on mount. Camera + signaling start only when the user
-  // taps "Start Streaming". No auto-connection.
+  // Request permissions on mount so the preview is live immediately.
+  // Signaling starts with the app; the media session starts itself the
+  // moment OBS connects — there is nothing to press here.
   React.useEffect(() => {
     let active = true;
     void (async () => {
@@ -202,62 +196,10 @@ export default function CameraScreen() {
     setGridOverlay(!gridOverlay);
   };
 
-  const startTimer = () => {
-    if (timerActive) return;
-    setTimerActive(true);
-    setTimerSeconds(3);
-    const interval = setInterval(() => {
-      setTimerSeconds((s) => {
-        if (s <= 1) {
-          clearInterval(interval);
-          setTimerActive(false);
-          setFocusPoint(null);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-  };
-
-  // Start streaming: start camera capture, init signaling, begin WebRTC to OBS.
-  const startStreaming = async () => {
-    if (isStreaming) return;
-    setStreamError(null);
-    try {
-      await streamSettings.load();
-      await CameraService.startCapture(selectedCamera, streamSettings.getResolution().split('x').map(Number)[0], streamSettings.getResolution().split('x').map(Number)[1], streamSettings.getFps());
-      await signalingService.initialize();
-      setCameraReady(true);
-      setIsStreaming(true);
-    } catch (error) {
-      setStreamError(error instanceof Error ? error.message : 'Failed to start streaming');
-    }
-  };
-
-  // Stop streaming: release camera, close signaling, reset state.
-  const stopStreaming = async () => {
-    if (!isStreaming) return;
-    try {
-      await streamingService.stopStreaming();
-    } catch {
-      /* ignore stop errors */
-    }
-    signalingService.disconnect();
-    setCameraReady(false);
-    setIsStreaming(false);
-    setStreamError(null);
-  };
-
-  // Listen to streaming state changes from the service.
+  // The passive pipeline serves whichever camera is selected here.
   React.useEffect(() => {
-    streamingService.setOnStateChange((state) => {
-      setIsStreaming(state.isStreaming);
-      setStreamError(state.error || null);
-    });
-    return () => {
-      streamingService.setOnStateChange(() => undefined);
-    };
-  }, []);
+    streamingService.setPreferredCamera(selectedCamera);
+  }, [selectedCamera]);
 
   React.useEffect(() => {
     loadCameras();
@@ -279,7 +221,7 @@ export default function CameraScreen() {
       <View style={styles.centerContainer}>
         <Text style={styles.permissionTitle}>Camera Access Required</Text>
         <Text style={styles.permissionSubtitle}>
-          Ojowacam needs access to your camera to stream feed directly to OBS.
+          Ojowacam needs access to your camera to send your feed to OBS.
         </Text>
         <TouchableOpacity style={styles.primaryButton} onPress={() => void ensureCapturePermissions().then((g) => setPermission(g))}>
           <Text style={styles.primaryButtonText}>Grant Permission</Text>
@@ -313,13 +255,6 @@ export default function CameraScreen() {
         {/* Focus point indicator (tap to focus) */}
         {focusPoint && (
           <View style={[styles.focusRing, { left: focusPoint.x - 30, top: focusPoint.y - 30 }]} />
-        )}
-
-        {/* Countdown timer overlay */}
-        {timerActive && timerSeconds > 0 && (
-          <View style={styles.timerOverlay}>
-            <Text style={styles.timerText}>{timerSeconds}</Text>
-          </View>
         )}
 
         {/* Grid overlay (rule of thirds) */}
@@ -376,10 +311,6 @@ export default function CameraScreen() {
        * the right edge so the preview keeps maximum width. */}
       {isLandscape ? (
         <View style={styles.bottomBarLandscape}>
-          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={isStreaming ? stopStreaming : startStreaming}>
-            <Text style={[styles.controlIcon, styles.controlIconLandscape]}>{isStreaming ? '⏹' : '▶'}</Text>
-            <Text style={[styles.controlText, styles.controlTextLandscape]}>{isStreaming ? 'Stop' : 'Stream'}</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={() => setTorch(!torch)}>
             <Text style={[styles.controlIcon, styles.controlIconLandscape]}>{torch ? '⚡' : '🔌'}</Text>
             <Text style={[styles.controlText, styles.controlTextLandscape]}>Flash</Text>
@@ -388,10 +319,6 @@ export default function CameraScreen() {
             <Text style={[styles.controlIcon, styles.controlIconLandscape]}>{gridOverlay ? '🟰' : '📐'}</Text>
             <Text style={[styles.controlText, styles.controlTextLandscape]}>Grid</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={startTimer}>
-            <Text style={[styles.controlIcon, styles.controlIconLandscape]}>⏱</Text>
-            <Text style={[styles.controlText, styles.controlTextLandscape]}>Timer</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={[styles.controlButton, styles.controlButtonLandscape]} onPress={toggleFacing}>
             <Text style={[styles.controlIcon, styles.controlIconLandscape]}>🔄</Text>
             <Text style={[styles.controlText, styles.controlTextLandscape]}>Flip</Text>
@@ -399,10 +326,6 @@ export default function CameraScreen() {
         </View>
       ) : (
         <View style={styles.bottomBar}>
-          <TouchableOpacity style={[styles.controlButton, styles.streamingButton]} onPress={isStreaming ? stopStreaming : startStreaming}>
-            <Text style={[styles.controlIcon, styles.streamingIcon]}>{isStreaming ? '⏹' : '▶'}</Text>
-            <Text style={[styles.controlText, styles.streamingText]}>{isStreaming ? 'Stop Streaming' : 'Start Streaming'}</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={styles.controlButton} onPress={() => setTorch(!torch)}>
             <Text style={styles.controlIcon}>{torch ? '⚡' : '🔌'}</Text>
             <Text style={styles.controlText}>Flash</Text>
@@ -411,11 +334,6 @@ export default function CameraScreen() {
           <TouchableOpacity style={styles.controlButton} onPress={toggleGrid}>
             <Text style={styles.controlIcon}>{gridOverlay ? '🟰' : '📐'}</Text>
             <Text style={styles.controlText}>Grid</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.controlButton} onPress={startTimer}>
-            <Text style={styles.controlIcon}>⏱</Text>
-            <Text style={styles.controlText}>Timer</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.controlButton} onPress={toggleFacing}>
@@ -616,60 +534,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '500',
   },
-  streamingButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 48,
-    backgroundColor: '#0a84ff',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    marginBottom: 6,
-  },
-  streamingIcon: {
-    fontSize: 18,
-    marginBottom: 2,
-  },
-  streamingText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-
-  /* --- Landscape overrides --- */
-  errorBanner: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 180,
-    backgroundColor: 'rgba(235, 87, 87, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(235, 87, 87, 0.4)',
-    borderRadius: 12,
-    padding: 12,
-    zIndex: 10,
-  },
-  errorBannerLandscape: {
-    bottom: 92,
-  },
-  errorText: {
-    color: '#ffb4ae',
-    fontSize: 13,
-    textAlign: 'center',
-  },
-
-  /* --- Digital camera feature styles --- */
-  streamingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
-  },
-  streamingSub: {
-    color: '#c9d1d9',
-    fontSize: 13,
-    marginTop: 6,
-  },
   focusRing: {
     position: 'absolute',
     width: 60,
@@ -677,18 +541,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#0a84ff',
     borderRadius: 30,
-  },
-  timerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    zIndex: 20,
-  },
-  timerText: {
-    color: '#fff',
-    fontSize: 72,
-    fontWeight: '800',
   },
   gridOverlay: {
     ...StyleSheet.absoluteFillObject,

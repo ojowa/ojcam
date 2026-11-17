@@ -3,8 +3,8 @@
  *
  * Persisted streaming preferences: resolution, framerate, and autofocus.
  * Microphone audio is always included with video in a single stream source.
- * CameraScreen feeds these into startStreaming; bitrate is derived from
- * resolution x fps instead of being hardcoded.
+ * The passive auto-start feeds these into the session; bitrate is derived
+ * from resolution x fps instead of being hardcoded.
  */
 
 import * as SecureStore from 'expo-secure-store';

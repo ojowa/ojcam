@@ -73,7 +73,7 @@ export class StreamingService {
 
   private onStateChange?: (state: StreamingState) => void;
   private pairingWaiter: { resolve: (success: boolean) => void } | null = null;
-  /** Camera/config of the last manual start, reused by auto-start. */
+  /** Camera/config of the last session, reused by the passive auto-start. */
   private lastCameraId: string | null = null;
   private lastStreamConfig: StreamConfig | null = null;
   private autoStartInFlight = false;
@@ -92,9 +92,11 @@ export class StreamingService {
           void WebRTCService.createOffer(true).catch((error) => {
             console.warn('Failed to re-offer to the new peer:', error);
           });
+        } else {
+          // Passive camera: the phone never asks anyone to "stream". The
+          // instant a peer (OBS) attaches, serve the camera automatically.
+          void this.autoStartStreaming();
         }
-        // Nothing is streaming yet: wait for the user to explicitly start
-        // streaming from the Camera screen. Do not auto-start.
       },
       onDisconnected: () => {
         this.state.isConnected = false;
@@ -150,11 +152,14 @@ export class StreamingService {
       WebRTCService.onLocalSdp((type, sdp) => { void signalingService.sendOffer(sdp, type); });
       WebRTCService.onIceCandidate((candidate) => { void signalingService.sendIceCandidate(candidate); });
       WebRTCService.onConnectionStateChange((state) => {
-        if (state === 'DISCONNECTED' || state === 'FAILED') {
-          this.isStreaming = false;
-          this.state.isStreaming = false;
-          this.notifyStateChange();
+        if (state === 'FAILED') {
+          // Terminal WebRTC failure: release camera/mic/peer connection so
+          // the next OBS connection starts a clean session instead of
+          // auto-start skipping past half-alive resources.
+          void this.stopStreaming();
         }
+        // DISCONNECTED is intentionally left alone: ICE commonly recovers to
+        // CONNECTED on its own, and tearing down would kill a live session.
       });
       this.state.isConnected = signalingService.isConnected();
       this.state.isAuthenticated = authService.isAuthenticated();
@@ -253,7 +258,7 @@ export class StreamingService {
         const cameraOk = perms[PermissionsAndroid.PERMISSIONS.CAMERA] === PermissionsAndroid.RESULTS.GRANTED;
         const micOk = perms[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED;
         if (!cameraOk || !micOk) {
-          throw new Error('Camera and microphone permissions are required to stream.');
+          throw new Error('Camera and microphone permissions are required to serve the camera.');
         }
       }
       this.streamConfig = config;
@@ -330,9 +335,10 @@ export class StreamingService {
   }
 
   /**
-   * Start streaming as soon as a peer connects: reuse the camera and quality
-   * of the last manual start, otherwise fall back to the first available
-   * camera at 720p30.
+   * Start serving the camera as soon as a peer connects: reuse the camera and
+   * quality of the last session, otherwise fall back to the camera picked on
+   * the Camera screen (or the first available one) at the Settings-screen
+   * resolution/fps/bitrate.
    */
   private async autoStartStreaming(): Promise<void> {
     if (this.autoStartInFlight || this.isStreaming || this.streamResourcesStarted) return;
@@ -349,10 +355,11 @@ export class StreamingService {
         const cameras = await CameraService.getAvailableCameras();
         cameraId = cameras && cameras.length > 0 ? cameras[0].id : 'camera-0';
       }
+      await streamSettings.load();
       const config: StreamConfig = this.lastStreamConfig ?? {
-        resolution: '1280x720',
-        fps: 30,
-        bitrate: 4000000,
+        resolution: streamSettings.getResolution(),
+        fps: streamSettings.getFps(),
+        bitrate: streamSettings.getBitrate(),
         codec: 'H264',
       };
       await this.startStreaming(cameraId, config);
@@ -400,6 +407,10 @@ export class StreamingService {
 
   getIsStreaming(): boolean { return this.isStreaming; }
   getCurrentCameraId(): string | null { return this.currentCameraId; }
+  /** Camera picked on the Camera screen; reused by the passive auto-start. */
+  setPreferredCamera(cameraId: string | null): void {
+    this.lastCameraId = cameraId;
+  }
   getConfig(): StreamConfig { return { ...this.streamConfig }; }
   getSignalingState(): any { return signalingService.getState(); }
   isAuthenticated(): boolean { return authService.isAuthenticated(); }
