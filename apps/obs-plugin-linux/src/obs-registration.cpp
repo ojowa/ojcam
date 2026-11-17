@@ -20,8 +20,11 @@ bool obs_module_load(void)
     // Register Ojowacam video source
     obs_register_source(&ojowacam_video_source_info);
 
-    // Initialize device manager
+    // Initialize device manager and start same-network discovery (UDP
+    // beacons + mDNS where available) so the Device dropdown can list
+    // every phone on the network.
     DeviceManager::GetInstance()->Initialize();
+    DeviceManager::GetInstance()->StartDiscovery();
 
     return true;
 }

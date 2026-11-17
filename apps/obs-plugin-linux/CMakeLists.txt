@@ -80,10 +80,26 @@ set(LINUX_SOURCES
 
 add_library(ojowacam-obs MODULE ${LINUX_SOURCES})
 
+# Avahi is optional: UDP beacon discovery works without it, but when the
+# client headers are present we also browse _ojowacam._tcp via mDNS.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(AVAHI QUIET avahi-client)
+endif()
+
 target_link_libraries(ojowacam-obs PRIVATE ${OBS_LIBRARIES} streaming-core
     dl
     pthread
 )
+
+if(AVAHI_FOUND)
+    message(STATUS "Avahi found: enabling mDNS discovery")
+    target_include_directories(ojowacam-obs PRIVATE ${AVAHI_INCLUDE_DIRS})
+    target_link_libraries(ojowacam-obs PRIVATE ${AVAHI_LDFLAGS})
+    target_compile_definitions(ojowacam-obs PRIVATE OJO_HAVE_AVAHI)
+else()
+    message(STATUS "Avahi not found: UDP beacon discovery only")
+endif()
 
 set_target_properties(ojowacam-obs PROPERTIES
     PREFIX ""

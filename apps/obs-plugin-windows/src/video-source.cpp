@@ -165,6 +165,28 @@ void ojowacam_video_update(void *data, obs_data_t *settings)
     }
 }
 
+// Fill the Device combo with every phone currently in the beacon table
+// (several phones on the same network each get their own entry). Clears the
+// combo first so the same helper builds the initial list and repopulates it
+// when the Refresh button is pressed.
+static void PopulateDeviceList(obs_property_t *device_list)
+{
+    obs_property_list_clear(device_list);
+
+    auto *dm = ojowacam::DeviceManager::GetInstance();
+    auto devices = dm->GetDevices();
+    if (devices.empty()) {
+        obs_property_list_add_string(device_list, "No devices found", "");
+        blog(LOG_INFO, "[Ojowacam] Discovery: no phones seen yet");
+        return;
+    }
+    for (const auto& dev : devices) {
+        std::string label = dev.device_name + " (" + dev.ip_address + ")";
+        obs_property_list_add_string(device_list, label.c_str(), dev.device_id.c_str());
+    }
+    blog(LOG_INFO, "[Ojowacam] Discovery: %zu device(s) in list", devices.size());
+}
+
 obs_properties_t *ojowacam_video_properties(void *data)
 {
     auto *d = static_cast<OjowacamVideoData*>(data);
@@ -177,24 +199,24 @@ obs_properties_t *ojowacam_video_properties(void *data)
                             "Ojowacam OBS Plugin v" OJOWACAM_VERSION,
                             OBS_TEXT_INFO);
 
+    obs_properties_add_text(props, "discovery_hint",
+        "Phones running Ojowacam on this network are discovered "
+        "automatically and listed below. Press Refresh to rescan.",
+        OBS_TEXT_INFO);
+
     obs_property_t *device_list = obs_properties_add_list(
         props, "device_id", "Device", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    PopulateDeviceList(device_list);
 
-    auto *dm = ojowacam::DeviceManager::GetInstance();
-    auto devices = dm->GetDevices();
-    if (devices.empty()) {
-        obs_property_list_add_string(device_list, "No devices found", "");
-    } else {
-        for (const auto& dev : devices) {
-            std::string label = dev.device_name + " (" + dev.ip_address + ")";
-            obs_property_list_add_string(device_list, label.c_str(), dev.device_id.c_str());
-        }
-    }
-
+    // Rebuild the Device combo from the beacon table. Returning true makes
+    // OBS re-render the properties from this same list, so the dropdown
+    // updates in place while the dialog stays open.
     obs_properties_add_button(props, "refresh_devices", "Refresh Devices",
-        [](obs_properties_t*, obs_property_t*, void*) {
-            auto *dm = ojowacam::DeviceManager::GetInstance();
-            (void)dm;
+        [](obs_properties_t *props, obs_property_t*, void*) {
+            obs_property_t *device_list = obs_properties_get(props, "device_id");
+            if (device_list) {
+                PopulateDeviceList(device_list);
+            }
             return true;
         });
 

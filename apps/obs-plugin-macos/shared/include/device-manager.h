@@ -4,6 +4,7 @@
 #include <vector>
 #include <mutex>
 #include <functional>
+#include <cstdint>
 
 namespace ojowacam {
 
@@ -14,6 +15,10 @@ struct DiscoveredDevice {
     int port;
     bool supports_video;
     bool supports_audio;
+    // Steady-clock ms of the last UDP beacon for this device. 0 means the
+    // device is not beacon-tracked (mDNS entries, manually added devices)
+    // and never expires on its own.
+    uint64_t last_seen_ms = 0;
 };
 
 class DeviceManager {

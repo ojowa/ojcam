@@ -43,7 +43,7 @@
             #define OJO_USE_BONJOUR 1
         #endif
     #endif
-#elif defined(__linux__)
+#elif defined(__linux__) && defined(OJO_HAVE_AVAHI)
     #include <avahi-client/client.h>
     #include <avahi-client/lookup.h>
     #include <avahi-common/simple-watch.h>
@@ -338,10 +338,12 @@ void StopNoMdnsDiscovery(NoMdnsContext* ctx) {
 // UDP beacon discovery — works on any shared network (LAN or phone hotspot)
 // without mDNS support or manual IP entry.
 //
-// Both ends broadcast "OJOWACAM|1|role=<phone|obs>|ws=<port>" to
-// 255.255.255.255:kDiscoveryUdpPort every 1.5 s. Receivers use the datagram's
-// SOURCE address as the peer's current IP (payload IPs are never trusted),
-// so a changed address simply replaces the previous one.
+// Both ends broadcast "OJOWACAM|1|role=<phone|obs>|ws=<port>[|id=<device>]"
+// to 255.255.255.255:kDiscoveryUdpPort every 1.5 s. Receivers use the
+// datagram's SOURCE address as the peer's current IP (payload IPs are never
+// trusted); the optional id is the phone's stable identity so one phone
+// keeps a single entry across IP changes and several phones on the same
+// network stay distinct.
 // ===========================================================================
 
 struct UdpBeaconContext {
@@ -363,9 +365,10 @@ static bool ensureWinsock() {
     return true;
 }
 
-// Parses "OJOWACAM|1|role=<r>|ws=<port>". Returns false on any malformed
-// input; never reads past len.
-static bool parseBeacon(const char* data, size_t len, std::string& role, int& ws_port) {
+// Parses "OJOWACAM|1|role=<r>|ws=<port>[|id=<device>]". Returns false on any
+// malformed input; never reads past len.
+static bool parseBeacon(const char* data, size_t len, std::string& role,
+                        int& ws_port, std::string& device_id) {
     static const std::string magic = ojowacam::kBeaconMagic;
     std::string payload(data, len);
     if (payload.compare(0, magic.size(), magic) != 0) return false;
@@ -373,6 +376,7 @@ static bool parseBeacon(const char* data, size_t len, std::string& role, int& ws
 
     role.clear();
     ws_port = 0;
+    device_id.clear();
     size_t pos = magic.size() + 1;
     while (pos < payload.size()) {
         size_t end = payload.find('|', pos);
@@ -386,11 +390,32 @@ static bool parseBeacon(const char* data, size_t len, std::string& role, int& ws
                 role = value;
             } else if (key == "ws") {
                 ws_port = std::atoi(value.c_str());
+            } else if (key == "id") {
+                // Stable per-install identity (capped defensively).
+                device_id = value.substr(0, 64);
             }
         }
         pos = end + 1;
     }
     return !role.empty() && ws_port > 0 && ws_port <= 65535;
+}
+
+// Steady-clock milliseconds for beacon freshness bookkeeping.
+static uint64_t NowMs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
+// Phones re-beacon every 1.5 s; this long without a beacon means the app
+// closed or the phone left the network. Entries with last_seen_ms == 0
+// (mDNS, manual) are not beacon-tracked and never expire here.
+static constexpr uint64_t kBeaconTtlMs = 8000;
+
+static bool IsBeaconDevice(const ojowacam::DiscoveredDevice& d) {
+    return d.device_id.rfind("phone:", 0) == 0 ||
+           d.device_id.rfind("phone@", 0) == 0;
 }
 
 static void startUdpBeacon(UdpBeaconContext* ctx, ojowacam::DeviceManager* manager) {
@@ -447,7 +472,8 @@ static void startUdpBeacon(UdpBeaconContext* ctx, ojowacam::DeviceManager* manag
             }
             std::string role;
             int ws_port = 0;
-            if (!parseBeacon(buf, static_cast<size_t>(n), role, ws_port)) continue;
+            std::string phone_id;
+            if (!parseBeacon(buf, static_cast<size_t>(n), role, ws_port, phone_id)) continue;
             // Only the phone's beacons become devices here; the plugin
             // ignores its own broadcasts (they also loop back).
             if (role != "phone") continue;
@@ -459,7 +485,12 @@ static void startUdpBeacon(UdpBeaconContext* ctx, ojowacam::DeviceManager* manag
             dev.ip_address = ip_buf;
             dev.port = ws_port;
             dev.device_name = "Ojowacam phone";
-            dev.device_id = std::string("phone@") + ip_buf;
+            // Key on the phone's stable id when the beacon carries one so
+            // IP changes update the entry in place; fall back to the source
+            // address for older phone builds.
+            dev.device_id = phone_id.empty()
+                ? (std::string("phone@") + ip_buf)
+                : (std::string("phone:") + phone_id);
             dev.supports_video = true;
             dev.supports_audio = true;
 
@@ -536,7 +567,19 @@ void DeviceManager::Shutdown() {
 
 std::vector<ojowacam::DiscoveredDevice> DeviceManager::GetDevices() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return devices_;
+    std::vector<ojowacam::DiscoveredDevice> out;
+    out.reserve(devices_.size());
+    const uint64_t now = NowMs();
+    for (const auto& d : devices_) {
+        // Hide beacon-tracked phones that went silent; mDNS and manually
+        // added devices (last_seen_ms == 0) are kept as-is.
+        if (IsBeaconDevice(d) && d.last_seen_ms != 0 &&
+            now - d.last_seen_ms > kBeaconTtlMs) {
+            continue;
+        }
+        out.push_back(d);
+    }
+    return out;
 }
 
 void DeviceManager::AddDevice(const ojowacam::DiscoveredDevice &device) {
@@ -585,25 +628,36 @@ void DeviceManager::RemoveDeviceCallback(uint64_t id) {
 }
 
 void DeviceManager::HandleDiscovered(const DiscoveredDevice &device) {
+    const uint64_t now = NowMs();
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // A phone's address can change between networks; the latest beacon
-        // wins and stale entries for other addresses are dropped.
-        bool same_present = false;
-        for (const auto& d : devices_) {
+        // One entry per device, keyed by its stable id: the latest beacon
+        // refreshes the address in place (an IP change never duplicates the
+        // phone) and other entries are never touched, so every phone on the
+        // network stays listed side by side.
+        bool present = false;
+        for (auto& d : devices_) {
             if (d.device_id == device.device_id) {
-                same_present = true;
+                d = device;
+                d.last_seen_ms = now;
+                present = true;
                 break;
             }
         }
+        if (!present) {
+            DiscoveredDevice entry = device;
+            entry.last_seen_ms = now;
+            devices_.push_back(entry);
+        }
+        // Opportunistically drop phones that stopped beaconing (they
+        // re-announce every 1.5 s, so 8 s of silence means the app is gone).
         devices_.erase(
             std::remove_if(devices_.begin(), devices_.end(),
                            [&](const DiscoveredDevice& d) {
-                               return d.device_id.rfind("phone@", 0) == 0 &&
-                                      d.device_id != device.device_id;
+                               return IsBeaconDevice(d) && d.last_seen_ms != 0 &&
+                                      now - d.last_seen_ms > kBeaconTtlMs;
                            }),
             devices_.end());
-        if (!same_present) devices_.push_back(device);
     }
     // Fire for every beacon (listeners gate themselves, e.g. "already
     // connected"), never while holding mutex_, and under invoke_mutex_ with a

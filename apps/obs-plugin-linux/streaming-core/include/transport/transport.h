@@ -17,6 +17,9 @@ inline constexpr uint16_t kOjowacamPort = 8765;
 inline constexpr uint16_t kPhoneWsPort = kOjowacamPort;
 inline constexpr uint16_t kPluginWsPort = kOjowacamPort;
 inline constexpr uint16_t kDiscoveryUdpPort = kOjowacamPort;
+// Shared UDP beacon payload prefix; the trailing fields are
+// "|role=<phone|obs>|ws=<port>[|id=<device>]".
+inline constexpr const char* kBeaconMagic = "OJOWACAM|1";
 
 class Transport {
 public:
