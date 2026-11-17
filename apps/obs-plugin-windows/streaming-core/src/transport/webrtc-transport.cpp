@@ -1214,9 +1214,20 @@ void WebRTCTransport::addIceCandidate(const std::string& candidate) {
         [impl_->peer_connection addIceCandidate:ice];
     }
 #elif defined(_WIN32)
-    // ICE candidate wiring depends on libwebrtc version; log for now
-    blog(LOG_DEBUG, "[Ojowacam] ICE candidate received (Windows)");
-    (void)candidate;
+    if (impl_->peer_connection) {
+        webrtc::SdpParseError error;
+        std::unique_ptr<webrtc::IceCandidateInterface> ice_candidate =
+            webrtc::CreateIceCandidate("", 0, candidate, &error);
+        if (ice_candidate) {
+            impl_->peer_connection->AddIceCandidate(std::move(ice_candidate));
+            blog(LOG_DEBUG,
+                 "[Ojowacam] ICE candidate applied (Windows)");
+        } else {
+            blog(LOG_ERROR,
+                 "[Ojowacam] Failed to parse ICE candidate: %s",
+                 error.description.c_str());
+        }
+    }
 #endif
 #elif defined(OJO_LIBDATACHANNEL)
     std::shared_ptr<rtc::PeerConnection> pc;
