@@ -549,20 +549,6 @@ public:
         return started_;
     }
 
-    // Returns true if the plugin WebSocket server is listening (bound to
-    // kPluginWsPort). Returns false if the port is already in use — callers
-    // must treat that as fatal: without the server, the phone cannot dial in.
-    bool registerAcceptor(uint64_t id, Acceptor acceptor) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        acceptors_[id] = std::move(acceptor);
-        if (!started_) {
-            started_ = listener_.start(kPluginWsPort, [this](ojo_socket_t socket) {
-                this->onAccept(socket);
-            });
-        }
-        return started_;
-    }
-
     void unregisterAcceptor(uint64_t id) {
         std::lock_guard<std::mutex> lock(mutex_);
         acceptors_.erase(id);
