@@ -25,11 +25,13 @@ jobs:
           sudo apt-get update
           # Note: "qt6-base" is not an Ubuntu package name (and the UI is
           # disabled anyway). libobs in OBS 33 hard-requires FFmpeg >= 8.0,
-          # SIMDe, uthash, jansson and zlib; libobs-opengl's configure step
-          # (which always runs) requires libdrm/X11/XCB; PulseAudio keeps
-          # the default ENABLE_PULSEAUDIO=ON satisfied; avahi/opus are for
-          # the plugin's own device discovery and audio decode.
+          # SIMDe, uthash, jansson and zlib; cmake/linux/defaults.cmake
+          # requires ECM (Extra CMake Modules); libobs-opengl's configure
+          # step (which always runs) requires libdrm/X11/XCB; PulseAudio
+          # keeps the default ENABLE_PULSEAUDIO=ON satisfied; avahi/opus
+          # are for the plugin's own device discovery and audio decode.
           sudo apt-get install -y cmake build-essential pkg-config \
+            extra-cmake-modules \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
             libjansson-dev uthash-dev libsimde-dev zlib1g-dev \
             libdrm-dev libx11-dev libxcb1-dev libx11-xcb-dev libpulse-dev \
